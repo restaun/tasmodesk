@@ -26,6 +26,7 @@ from tasmota_manager import (
 
 PREFERENCE_DEFAULTS: dict[str, str | bool] = {"theme": "light", "page": "Dispositivos", "auto_refresh": True}
 AUTO_REFRESH_SECONDS = 60
+FINISHED_JOB_SECONDS = 5
 
 
 class BackupEntry(TypedDict):
@@ -133,6 +134,7 @@ class UpdateJob:
     credentials: tuple[str, str] = field(default=("admin", ""), repr=False)
     firmware: SharedFirmware = field(default_factory=SharedFirmware, repr=False)
     local_name: str = ""
+    finished_at: float = 0
 
 
 class TasmotaService:
@@ -283,6 +285,11 @@ class TasmotaService:
 
     def snapshot(self) -> ServiceSnapshot:
         with self.lock:
+            now = time.monotonic()
+            for ip, job in list(self.jobs.items()):
+                if job.state == "success" and now - job.finished_at >= FINISHED_JOB_SECONDS:
+                    del self.jobs[ip]
+                    self._touch()
             release = self.selected_release()
             rows: list[DeviceEntry] = []
             for ip, result in sorted(self.devices.items(), key=lambda item: int(item[0].split(".")[-1])):
@@ -669,11 +676,13 @@ class TasmotaService:
                         self._log(job, f"Instalación confirmada: {current.version} desde {job.local_name}", 100)
                         with self.lock:
                             job.state = "success"
+                            job.finished_at = time.monotonic()
                         return
                     if not job.local_name and firmware_release_installed(current, job.release):
                         self._log(job, f"Instalación confirmada: {current.version} / {job.release.filename}", 100)
                         with self.lock:
                             job.state = "success"
+                            job.finished_at = time.monotonic()
                         return
                     if (not job.by_file and not second_sent
                             and current.version.casefold().endswith("(safeboot)")
