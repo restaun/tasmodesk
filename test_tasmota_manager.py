@@ -457,6 +457,24 @@ class DimmerAndLanguageTests(unittest.TestCase):
             self.status.ip, {"Status": {}, "StatusFWR": {}}, {"StatusSTS": {}}
         ).dimmer)
 
+    def test_parses_eight_digit_locale_from_safeboot(self) -> None:
+        status = parse_device_status(
+            self.status.ip,
+            {"Status": {"DeviceName": "Comedor"},
+             "StatusFWR": {"Version": "12.1.0(safeboot)", "Hardware": "ESP32-D0WD-V3 rev.3"},
+             "StatusMEM": {"Features": ["00000809", "008005C0"]}},
+            {"StatusSTS": {}},
+        )
+        self.assertEqual(status.language_lcid, 2057)
+        self.assertEqual(status.version, "12.1.0(safeboot)")
+        for bad in ("12340809", "809", "000000809"):
+            with self.subTest(locale=bad), self.assertRaises(TasmotaError):
+                parse_device_status(
+                    self.status.ip,
+                    {"Status": {}, "StatusFWR": {}, "StatusMEM": {"Features": [bad]}},
+                    {"StatusSTS": {}},
+                )
+
     def test_rejects_invalid_dimmer_and_locale(self) -> None:
         for value in (-1, 101, True, "20", 20.5):
             with self.subTest(value=value), self.assertRaises(TasmotaError):
