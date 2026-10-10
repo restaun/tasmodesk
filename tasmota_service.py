@@ -175,7 +175,7 @@ class TasmotaService:
                 self.preferences_error = f"No se pudieron cargar las preferencias: {error}"
                 self._notify("error", self.preferences_error)
         if demo:
-            for octet, name in ((110, "Baño"), (111, "Comedor"), (112, "Cocina")):
+            for octet, name in ((50, "Jardín"), (51, "Garaje"), (52, "Porche")):
                 ip = f"192.168.1.{octet}"
                 self.devices[ip] = DeviceStatus(
                     ip, name, "15.6.0(release-tasmota32)", "ESP32-D0WD-V3",
