@@ -349,7 +349,7 @@ class TasmotaService:
             self._touch()
 
     def _client(self) -> TasmotaClient:
-        return TasmotaClient(self.username, self.password, timeout=12)
+        return TasmotaClient(self.username, self.password, timeout=15)
 
     def _launch(
         self, work: Callable[[], None], *, ip: str = "", global_work: str = "", exclusive: bool = True,
@@ -406,13 +406,14 @@ class TasmotaService:
         if self.inventory_error:
             raise TasmotaError(self.inventory_error + " No se sobrescribirá el inventario.")
         user, password = self.username, self.password
+        known = tuple(self.devices)
 
         def progress(done: int, total: int) -> None:
             with self.lock:
                 self.search_progress = f"{done}/{total} IP"
 
         def work() -> None:
-            result = discover_tasmotas(user, password, progress)
+            result = discover_tasmotas(user, password, progress, known=known)
             with self.lock:
                 ips = tuple(set(self.devices) | set(result.devices))
             save_device_inventory(ips)

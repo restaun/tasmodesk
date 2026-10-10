@@ -48,12 +48,15 @@ Las credenciales solo permanecen en la memoria del programa.
   **Archivo local…** (para todos) y **Archivo…** (en cada equipo) permiten
   instalar un `.bin` propio; ver «Firmware local».
 
-**Buscar Tasmotas** explora la subred con hasta 16 consultas concurrentes de
-solo lectura. Guarda las IP en `Documentos\TasmotaManager\devices.json` y las
+**Buscar Tasmotas** explora la subred en dos pasadas de solo lectura: una
+rápida (2 s por IP) y otra solo para las IP que agotaron el tiempo (10 s; 12 s
+y un reintento para los equipos guardados), porque algunos ESP32 en ahorro de
+energía Wi-Fi o en Safeboot tardan varios segundos en responder la primera vez.
+Tarda unos 15 segundos. Guarda las IP en `Documentos\TasmotaManager\devices.json` y las
 carga al arrancar. El primer arranque sin inventario empieza vacío.
 Las búsquedas conservan los equipos guardados que no respondan y añaden los
 nuevos. Un inventario corrupto impide sobrescribirlo y se comunica el error.
-**Refrescar estados** consulta solo los guardados.
+**Refrescar estados** consulta solo los guardados (12 s y un reintento si se agota el tiempo).
 El refresco automático consulta cada **60 segundos** y se pausa durante
 búsquedas, consultas, cambios y actualizaciones; puede desactivarse en
 Configuración. El sondeo de la interfaz no genera consultas continuas a los
