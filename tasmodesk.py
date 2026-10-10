@@ -639,15 +639,6 @@ class TasmotaWindow(QMainWindow):
                 self.service.start_local_updates(path, digest, ip)
         self.invoke(action)
 
-    def previous_backup(self, ip: str) -> None:
-        path, _filter = QFileDialog.getOpenFileName(
-            self, "Copia anterior de este equipo", str(self.service.backup_directory()),
-            "Configuración Tasmota (*.dmp)",
-        )
-        if path and self.confirm(f"¿Confirmas que esta copia pertenece a {ip}?\n{path}\n"
-                                 "Puede no incluir cambios posteriores."):
-            self.invoke(partial(self.service.use_previous_backup, ip, path))
-
     def job_card(self, layout: QVBoxLayout, job: JobEntry) -> None:
         progress = QProgressBar()
         progress.setRange(0, 100)
@@ -678,9 +669,6 @@ class TasmotaWindow(QMainWindow):
             else:
                 self.open_logs.discard(job["ip"])
         toggle.toggled.connect(show)
-        if job["needs_backup"]:
-            layout.addWidget(button("Seleccionar copia anterior de este equipo",
-                                    partial(self.previous_backup, job["ip"])))
 
     def poll(self, *, force: bool = False) -> None:
         if self.polling:
