@@ -154,6 +154,16 @@ Proyecto independiente, no afiliado al proyecto Tasmota. Úsalo bajo tu propia
 responsabilidad: una actualización fallida puede requerir recuperar el equipo
 por cable serie.
 
+## Apoya el proyecto
+
+Si te resulta útil, puedes invitarme a un café:
+
+[![Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/restaun)
+
+## Licencia
+
+Distribuido bajo la licencia MIT. Consulta [LICENSE](LICENSE).
+
 ---
 
 *Este programa ha sido programado íntegramente con inteligencia artificial (IA).*
