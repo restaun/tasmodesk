@@ -131,7 +131,7 @@ class ServiceTests(unittest.TestCase):
             "tasmota_service.download_firmware_file", return_value=Path("image.bin")
         ) as download, patch("tasmota_service.time.sleep"):
             trace.attach_mock(download, "download")
-            self.service._update(self.status, job, ("admin", ""), None)
+            self.service._update(self.status, job, ("admin", ""))
         self.assertEqual(trace.mock_calls[:4], [
             call.client.download_configuration_backup(self.status.ip, self.status.name),
             call.download(release),
@@ -150,12 +150,11 @@ class ServiceTests(unittest.TestCase):
         with patch("tasmota_service.TasmotaClient", return_value=client), patch(
             "tasmota_service.download_firmware_file"
         ) as download:
-            self.service._update(self.status, job, ("admin", ""), None)
+            self.service._update(self.status, job, ("admin", ""))
         download.assert_not_called()
         client.prepare_firmware_upload.assert_not_called()
         client.upload_firmware_file.assert_not_called()
         self.assertEqual(job.state, "error")
-        self.assertFalse(job.needs_backup)
 
     def test_uncertain_upload_is_not_repeated(self) -> None:
         job = UpdateJob(self.status.ip, self.service.selected_release(), True)
@@ -168,7 +167,7 @@ class ServiceTests(unittest.TestCase):
         with patch("tasmota_service.TasmotaClient", return_value=client), patch(
             "tasmota_service.download_firmware_file", return_value=Path("image.bin")
         ), patch("tasmota_service.time.sleep"):
-            self.service._update(self.status, job, ("admin", ""), None)
+            self.service._update(self.status, job, ("admin", ""))
         self.assertEqual(client.upload_firmware_file.call_count, 1)
         self.assertEqual(job.state, "success")
 
@@ -180,7 +179,7 @@ class ServiceTests(unittest.TestCase):
         with patch("tasmota_service.TasmotaClient", return_value=client), patch(
             "tasmota_service.download_firmware_file", return_value=Path("image.bin")
         ), patch.object(self.service, "_wait_phase", return_value=0):
-            self.service._update(self.status, job, ("admin", ""), None)
+            self.service._update(self.status, job, ("admin", ""))
         self.assertEqual(job.state, "error")
         self.assertLess(job.progress, 100)
 
@@ -195,7 +194,7 @@ class ServiceTests(unittest.TestCase):
         with patch("tasmota_service.TasmotaClient", return_value=client), patch(
             "tasmota_service.time.sleep"
         ) as sleep:
-            self.service._update(self.status, job, ("admin", ""), None)
+            self.service._update(self.status, job, ("admin", ""))
         self.assertEqual(
             client.command.call_args_list,
             [call(self.status.ip, f"OtaUrl {job.release.url}"),
@@ -204,21 +203,26 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(sleep.call_args_list, [call(20), call(60), call(30)])
         self.assertEqual(job.state, "success")
 
-    def test_safeboot_failed_backup_requires_explicit_previous_file(self) -> None:
+    def test_safeboot_skips_backup_and_uploads_file(self) -> None:
         job = UpdateJob(self.status.ip, self.service.selected_release(), True)
         safeboot = DeviceStatus(**{**self.status.__dict__, "version": "12.1.0(safeboot)"})
+        installed = DeviceStatus(**{**self.status.__dict__, "version": "15.7.0(release-tasmota32)"})
         client = Mock()
-        client.download_configuration_backup.side_effect = TasmotaError("404")
-        with patch("tasmota_service.TasmotaClient", return_value=client):
-            self.service._update(safeboot, job, ("admin", ""), None)
-        self.assertTrue(job.needs_backup)
-        self.service.jobs[job.ip] = job
-        self.service.devices[job.ip] = safeboot
-        with patch("tasmota_service.validate_existing_backup", return_value=Path("previous.dmp")):
-            self.service.use_previous_backup(job.ip, "previous.dmp")
-        self.assertEqual(job.state, "running")
-        self.assertFalse(job.needs_backup)
-        self.assertEqual(self.service.executor.submit.call_args.args[-1], Path("previous.dmp"))
+        client.read_status.return_value = installed
+        with patch("tasmota_service.TasmotaClient", return_value=client), patch(
+            "tasmota_service.download_firmware_file", return_value=Path("fw.bin")
+        ), patch("tasmota_service.firmware_release_installed", return_value=True), patch(
+            "tasmota_service.time.sleep"
+        ):
+            self.service._update(safeboot, job, ("admin", ""))
+        client.download_configuration_backup.assert_not_called()
+        client.upload_firmware_file.assert_called_once()
+        self.assertEqual(job.backup, "")
+        self.assertTrue(any("se omite la copia" in line for line in job.logs))
+        self.assertEqual(job.state, "success")
+        self.service.devices[safeboot.ip] = safeboot
+        with patch("tasmota_service.firmware_file_update_available", return_value=True):
+            self.assertIn("Safeboot, sin copia", self.service.update_confirmation(by_file=True))
 
     def test_preferences_persist_without_credentials_and_reject_corrupt_overwrite(self) -> None:
         self.service.set_access("admin", "not-saved")
@@ -383,7 +387,7 @@ class ServiceTests(unittest.TestCase):
             with patch("tasmota_service.TasmotaClient", return_value=client), patch(
                 "tasmota_service.download_firmware_file"
             ) as download, patch("tasmota_service.time.sleep"):
-                self.service._update(self.status, job, ("admin", ""), None)
+                self.service._update(self.status, job, ("admin", ""))
             download.assert_not_called()
             client.upload_firmware_file.assert_called_once_with(self.status.ip, copy)
             self.assertEqual(job.state, "success")

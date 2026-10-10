@@ -270,18 +270,6 @@ class NativeWindowTests(unittest.TestCase):
         with patch("tasmodesk.QDesktopServices.openUrl", return_value=False):
             self.assertFalse(self.window.invoke(lambda: self.window.open_webui(self.ip)))
 
-    def test_recovery_selects_and_confirms_previous_backup(self) -> None:
-        with patch("tasmodesk.QFileDialog.getOpenFileName", return_value=("previous.dmp", "")), patch.object(
-            self.window, "confirm", return_value=True
-        ), patch.object(self.service, "use_previous_backup") as previous:
-            self.window.previous_backup(self.ip)
-            previous.assert_called_once_with(self.ip, "previous.dmp")
-        with patch("tasmodesk.QFileDialog.getOpenFileName", return_value=("", "")), patch.object(
-            self.service, "use_previous_backup"
-        ) as previous:
-            self.window.previous_backup(self.ip)
-            previous.assert_not_called()
-
     def test_demo_disables_network_controls_and_poll_uses_auto_tick(self) -> None:
         from PySide6.QtWidgets import QPushButton, QSlider
         self.service.demo = True

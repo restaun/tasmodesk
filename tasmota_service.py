@@ -21,7 +21,7 @@ from tasmota_manager import (
     firmware_file_update_available, firmware_release_installed,
     firmware_update_available, load_device_inventory, local_firmware_compatible,
     read_local_firmware, save_device_inventory, scan_devices,
-    validate_existing_backup, validate_name,
+    validate_name,
 )
 
 PREFERENCE_DEFAULTS: dict[str, str | bool] = {"theme": "light", "page": "Dispositivos", "auto_refresh": True}
@@ -67,7 +67,6 @@ class JobEntry(TypedDict):
     progress: float
     logs: list[str]
     backup: str
-    needs_backup: bool
 
 
 class ServiceSnapshot(TypedDict):
@@ -108,6 +107,15 @@ class SharedFirmware:
             return self.path
 
 
+BACKUP_NOTE = ("Antes de actualizar se guarda una copia independiente por equipo; si falla, ese "
+               "equipo no se actualiza. En Safeboot no se hace copia: la configuración no está activa "
+               "y se conserva en el equipo.")
+
+
+def _safeboot_note(status: DeviceStatus) -> str:
+    return " — Safeboot, sin copia" if status.version.casefold().endswith("(safeboot)") else ""
+
+
 @dataclass
 class UpdateJob:
     ip: str
@@ -118,7 +126,6 @@ class UpdateJob:
     progress: float = 0
     logs: list[str] = field(default_factory=list)
     backup: str = ""
-    needs_backup: bool = False
     estimate_started: float = 0
     estimate_duration: int = 1
     estimate_start: int = 0
@@ -313,7 +320,6 @@ class TasmotaService:
                 jobs.append({
                     "ip": job.ip, "state": job.state, "message": job.message,
                     "progress": progress, "logs": list(job.logs), "backup": job.backup,
-                    "needs_backup": job.needs_backup,
                 })
             return {
                 "revision": self.revision, "devices": rows, "jobs": jobs,
@@ -504,15 +510,14 @@ class TasmotaService:
         assert release is not None
         return (
             f"Instalar Tasmota {release.version} / {release.filename} en:\n\n"
-            + "\n".join(f"{s.name} ({s.ip})"
+            + "\n".join(f"{s.name} ({s.ip})" + _safeboot_note(s)
                         + (f" — Wi-Fi débil {s.rssi}%" if s.rssi is not None and s.rssi < 60 else "")
                         for s in targets)
-            + "\n\nCopia previa independiente por equipo. Si falla una copia, ese equipo no "
-            "se actualiza. Los demás continúan. Reinicio y comprobación de versión e idioma."
+            + "\n\n" + BACKUP_NOTE + " Los demás continúan. Reinicio y comprobación de versión e idioma."
             + ("\nDescarga SHA-256 y subida desde el ordenador." if by_file else "\nOTA desde Internet.")
             + ("\nLos dispositivos se actualizarán en paralelo; más tráfico Wi-Fi."
                "\nSe omiten los no disponibles, incompatibles y ya actualizados." if not ip else "")
-            + "\n\n¿Guardar copias y continuar?"
+            + "\n\n¿Continuar?"
         )
 
     def start_updates(self, *, by_file: bool, ip: str = "") -> None:
@@ -527,7 +532,7 @@ class TasmotaService:
             for status in targets:
                 job = UpdateJob(status.ip, release, by_file, credentials=client_args, firmware=firmware)
                 self.jobs[status.ip] = job
-                self.executor.submit(self._update, status, job, client_args, None)
+                self.executor.submit(self._update, status, job, client_args)
             self._touch()
 
     def local_update_confirmation(self, path: str, ip: str = "") -> tuple[str, str]:
@@ -538,13 +543,13 @@ class TasmotaService:
         return (
             f"Instalar el archivo local {file.name}\n"
             f"Tamaño: {len(image) / 1024:.0f} KB\nSHA-256: {digest}\n\nEn:\n\n"
-            + "\n".join(f"{s.name} ({s.ip}) — ahora {s.version}" for s in targets)
+            + "\n".join(f"{s.name} ({s.ip}) — ahora {s.version}" + _safeboot_note(s) for s in targets)
             + "\n\nEl archivo es una imagen OTA válida para ESP32, pero su versión e idioma no "
             "pueden comprobarse de antemano. Se confirmará cuando el equipo vuelva a responder "
             "fuera de Safeboot y se registrará la versión instalada."
-            "\nCopia previa independiente por equipo; si falla, ese equipo no se actualiza."
+            "\n" + BACKUP_NOTE
             + ("\nLos dispositivos se actualizarán en paralelo." if not ip else "")
-            + "\n\n¿Guardar copias y continuar?",
+            + "\n\n¿Continuar?",
             digest,
         )
 
@@ -572,20 +577,7 @@ class TasmotaService:
                 job = UpdateJob(status.ip, release, True, credentials=client_args,
                                 firmware=firmware, local_name=file.name)
                 self.jobs[status.ip] = job
-                self.executor.submit(self._update, status, job, client_args, None)
-            self._touch()
-
-    def use_previous_backup(self, ip: str, path: str) -> None:
-        backup = validate_existing_backup(Path(path))
-        with self.lock:
-            job = self.jobs.get(ip)
-            status = self.devices.get(ip)
-            if not job or not job.needs_backup or not isinstance(status, DeviceStatus):
-                raise TasmotaError("Este equipo no está esperando una copia anterior.")
-            job.needs_backup = False
-            job.state = "running"
-            client_args = job.credentials
-            self.executor.submit(self._update, status, job, client_args, backup)
+                self.executor.submit(self._update, status, job, client_args)
             self._touch()
 
     def _log(self, job: UpdateJob, message: str, progress: int | None = None) -> None:
@@ -610,29 +602,22 @@ class TasmotaService:
 
     def _update(
         self, status: DeviceStatus, job: UpdateJob, client_args: tuple[str, str],
-        previous: Path | None,
     ) -> None:
         with self.lock:
             job.credentials = client_args
         client = TasmotaClient(*client_args, timeout=12)
         try:
-            self._log(job, "Guardando copia antes de actualizar", 3)
-            if previous is None:
-                try:
-                    backup = client.download_configuration_backup(status.ip, status.name)
-                except TasmotaError:
-                    if job.by_file and status.version.casefold().endswith("(safeboot)"):
-                        with self.lock:
-                            job.needs_backup = True
-                        raise
-                    raise
+            if status.version.casefold().endswith("(safeboot)"):
+                # Safeboot only holds the minimal recovery image; its backup is not useful.
+                self._log(job, "Equipo en Safeboot: se omite la copia de configuración", 10)
             else:
-                backup = previous
-            if not isinstance(backup, Path):
-                raise TasmotaError("No se confirmó la copia; no se inicia el firmware.")
-            with self.lock:
-                job.backup = str(backup)
-            self._log(job, f"Copia disponible: {backup}", 10)
+                self._log(job, "Guardando copia antes de actualizar", 3)
+                backup = client.download_configuration_backup(status.ip, status.name)
+                if not isinstance(backup, Path):
+                    raise TasmotaError("No se confirmó la copia; no se inicia el firmware.")
+                with self.lock:
+                    job.backup = str(backup)
+                self._log(job, f"Copia disponible: {backup}", 10)
             if job.by_file:
                 if job.local_name:
                     self._log(job, f"Usando archivo local verificado {job.local_name}", 20)
@@ -697,9 +682,7 @@ class TasmotaService:
             self._log(job, str(error))
             with self.lock:
                 job.state = "error"
-            self._notify("error", f"{status.name} ({status.ip}): {error}"
-                         + ("\nEn Safeboot puedes seleccionar y autorizar una copia .dmp anterior "
-                            "de este mismo equipo." if job.needs_backup else ""))
+            self._notify("error", f"{status.name} ({status.ip}): {error}")
         finally:
             with self.lock:
                 self._touch()

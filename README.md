@@ -70,6 +70,8 @@ y firmware pendiente. Cada tarjeta permite **Abrir WebUI** en el navegador.
 
 Antes de cualquier actualización se guarda una copia `.dmp` en
 `Documentos\TasmotaBackups`; si falla, ese equipo no se actualiza.
+Los equipos que ya están en Safeboot se actualizan sin copia: Safeboot es solo
+la imagen de recuperación y la configuración se conserva en el equipo.
 Los scripts Berry y archivos personalizados pueden requerir una copia aparte.
 La descarga por archivo valida formato ESP32, tamaño y SHA-256 publicado,
 y guarda la imagen en `Documentos\TasmotaFirmware`.
@@ -93,9 +95,6 @@ al iniciar cada trabajo. No cierres el programa durante una operación.
 
 Solo se ofrece la imagen estándar a equipos ESP32-D0WD-V3 que comuniquen
 `release-tasmota32`; la subida por archivo admite también Safeboot.
-Si Safeboot impide guardar una copia nueva, se permite seleccionar y autorizar
-explícitamente una copia anterior de ese mismo equipo. No se elige automáticamente.
-La copia puede no incluir cambios posteriores a su fecha.
 
 OTA usa `OtaUrl` y `Upgrade 1`. Si se detecta Safeboot, se envía una segunda
 orden una sola vez. Espera 20 segundos tras la primera orden y 60 tras la
@@ -110,7 +109,7 @@ El archivo elegido debe ser `.bin` y una imagen OTA válida para ESP32 clásico
 muestra tamaño y SHA-256. Al iniciar se comprueba que el archivo no ha cambiado
 y se copia a `Documentos\TasmotaFirmware\local-<sha>.bin`; esa copia es la que
 se sube. Se aplica a equipos ESP32-D0WD-V3 con Tasmota32 o en Safeboot, con la
-misma copia previa y el mismo flujo de Safeboot. Como la imagen no declara la
+misma regla de copia previa y el mismo flujo de Safeboot. Como la imagen no declara la
 versión ni el idioma de Tasmota, el éxito se confirma cuando el equipo vuelve a
 responder fuera de Safeboot y se registra la versión que comunica.
 
