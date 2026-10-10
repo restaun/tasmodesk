@@ -360,7 +360,8 @@ def parse_device_status(
     language_lcid = None
     if isinstance(features, list) and features:
         locale = features[0]
-        if not isinstance(locale, str) or re.fullmatch(r"[0-9A-Fa-f]{4}", locale) is None:
+        # Tasmota 12.x (Safeboot) reports 8 hex digits, e.g. "00000809"; newer builds use 4.
+        if not isinstance(locale, str) or re.fullmatch(r"(?:0000)?[0-9A-Fa-f]{4}", locale) is None:
             raise TasmotaError("El dispositivo devolvió un código de idioma no válido.")
         language_lcid = int(locale, 16)
     return DeviceStatus(
