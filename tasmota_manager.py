@@ -146,6 +146,9 @@ def firmware_update_available(
     """Only offer the generic ESP32 release to matching ESP32 Tasmota builds."""
     if "esp32-d0wd-v3" not in status.hardware.casefold():
         return False
+    if status.version.casefold().endswith("(safeboot)"):
+        # Safeboot can download the main firmware itself with OtaUrl + Upgrade 1.
+        return True
     if "release-tasmota32" not in status.version.casefold():
         return False
     current = VERSION_PATTERN.match(status.version)

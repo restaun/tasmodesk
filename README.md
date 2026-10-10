@@ -97,10 +97,11 @@ El fallo de uno no detiene los demás. Se captura el idioma y las credenciales
 al iniciar cada trabajo. No cierres el programa durante una operación.
 
 Solo se ofrece la imagen estándar a equipos ESP32-D0WD-V3 que comuniquen
-`release-tasmota32`; la subida por archivo admite también Safeboot.
+`release-tasmota32` o que estén en Safeboot (por OTA o por archivo).
 
 OTA usa `OtaUrl` y `Upgrade 1`. Si se detecta Safeboot, se envía una segunda
-orden una sola vez. Espera 20 segundos tras la primera orden y 60 tras la
+orden una sola vez. Si el equipo ya estaba en Safeboot, se envía una única
+orden y se espera 60 segundos. Espera 20 segundos tras la primera orden y 60 tras la
 segunda, con sondeos posteriores cada 30 segundos. La subida por archivo
 espera 30 segundos y no se repite si se pierde la conexión.
 El plazo es de seis minutos por fase.

@@ -619,6 +619,7 @@ class TasmotaService:
                 with self.lock:
                     job.backup = str(backup)
                 self._log(job, f"Copia disponible: {backup}", 10)
+            second_sent = False
             if job.by_file:
                 if job.local_name:
                     self._log(job, f"Usando archivo local verificado {job.local_name}", 20)
@@ -636,13 +637,22 @@ class TasmotaService:
                 deadline = self._wait_phase(job, 30, 60, 95, 60)
             else:
                 client.command(status.ip, f"OtaUrl {job.release.url}")
-                self._log(job, "Enviando Upgrade 1", 10)
-                try:
-                    client.command(status.ip, "Upgrade 1")
-                except TasmotaError as error:
-                    self._log(job, f"Orden sin confirmar: {error}. No se repite hasta detectar Safeboot.")
-                deadline = self._wait_phase(job, 20, 10, 35, 20)
-            second_sent = False
+                if status.version.casefold().endswith("(safeboot)"):
+                    # Already in Safeboot: this single order installs the main firmware.
+                    second_sent = True
+                    self._log(job, "Enviando Upgrade 1 desde Safeboot, una sola vez", 35)
+                    try:
+                        client.command(status.ip, "Upgrade 1")
+                    except TasmotaError as error:
+                        self._log(job, f"Orden sin confirmar: {error}; no se repite.")
+                    deadline = self._wait_phase(job, 60, 35, 95, 90)
+                else:
+                    self._log(job, "Enviando Upgrade 1", 10)
+                    try:
+                        client.command(status.ip, "Upgrade 1")
+                    except TasmotaError as error:
+                        self._log(job, f"Orden sin confirmar: {error}. No se repite hasta detectar Safeboot.")
+                    deadline = self._wait_phase(job, 20, 10, 35, 20)
             while time.monotonic() < deadline:
                 try:
                     current = client.read_status(status.ip)

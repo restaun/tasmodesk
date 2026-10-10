@@ -203,6 +203,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(sleep.call_args_list, [call(20), call(60), call(30)])
         self.assertEqual(job.state, "success")
 
+    def test_ota_started_in_safeboot_sends_single_order_without_backup(self) -> None:
+        self.service.set_language("English")
+        job = UpdateJob(self.status.ip, self.service.selected_release(), False)
+        safeboot = DeviceStatus(**{**self.status.__dict__, "version": "12.1.0(safeboot)"})
+        installed = DeviceStatus(**{**self.status.__dict__, "version": "15.6.0(release-tasmota32)"})
+        client = Mock()
+        client.read_status.side_effect = [safeboot, installed]
+        with patch("tasmota_service.TasmotaClient", return_value=client), patch(
+            "tasmota_service.time.sleep"
+        ) as sleep:
+            self.service._update(safeboot, job, ("admin", ""))
+        client.download_configuration_backup.assert_not_called()
+        self.assertEqual(
+            client.command.call_args_list,
+            [call(self.status.ip, f"OtaUrl {job.release.url}"), call(self.status.ip, "Upgrade 1")],
+        )
+        self.assertEqual(sleep.call_args_list, [call(60), call(30)])
+        self.assertEqual(job.state, "success")
+
     def test_safeboot_skips_backup_and_uploads_file(self) -> None:
         job = UpdateJob(self.status.ip, self.service.selected_release(), True)
         safeboot = DeviceStatus(**{**self.status.__dict__, "version": "12.1.0(safeboot)"})
