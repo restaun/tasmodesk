@@ -9,6 +9,9 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, call, patch
 
 from tasmota_manager import (
+    DISCOVERY_RETRY_TIMEOUT_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    DeviceTimeout,
     DeviceStatus,
     FirmwareRelease,
     RelayStatus,
@@ -64,6 +67,39 @@ class DeviceDiscoveryTests(unittest.TestCase):
         self.assertEqual(progress.call_count, 3)
         progress.assert_called_with(3, 3)
         self.assertTrue(all(item.args[2] in {"Status 0", "Status 11"} for item in command.call_args_list))
+
+    def test_discovery_retries_timed_out_ips_with_longer_timeout(self) -> None:
+        attempts: dict[str, int] = {}
+
+        def response(client: TasmotaClient, ip: str, command: str) -> dict[str, object]:
+            if command == "Status 0":
+                attempts[ip] = attempts.get(ip, 0) + 1
+                if ip.endswith(".4"):
+                    raise TasmotaError("rechazado")
+                if attempts[ip] == 1 or ip.endswith(".3"):
+                    raise DeviceTimeout("timed out")
+                return {"Status": {"DeviceName": "Lento"},
+                        "StatusFWR": {"Version": "12.1.0(safeboot)"}}
+            return {"StatusSTS": {}}
+
+        progress = Mock()
+        ips = ("192.168.1.2", "192.168.1.3", "192.168.1.4")
+        with patch.object(TasmotaClient, "command", autospec=True, side_effect=response) as command:
+            result = discover_tasmotas("admin", "", progress, ips, known=("192.168.1.2",))
+        self.assertEqual(set(result.devices), {"192.168.1.2"})
+        self.assertEqual(set(result.errors), {"192.168.1.3", "192.168.1.4"})
+        self.assertEqual(attempts, {"192.168.1.2": 2, "192.168.1.3": 2, "192.168.1.4": 1})
+        progress.assert_called_with(5, 5)
+        timeouts = {(item.args[1], item.args[0].timeout) for item in command.call_args_list}
+        self.assertIn(("192.168.1.2", REQUEST_TIMEOUT_SECONDS), timeouts)
+        self.assertIn(("192.168.1.3", DISCOVERY_RETRY_TIMEOUT_SECONDS), timeouts)
+
+    def test_refresh_retries_once_after_timeout(self) -> None:
+        status = Mock()
+        with patch.object(TasmotaClient, "read_status", autospec=True,
+                          side_effect=[DeviceTimeout("timed out"), status]) as read:
+            self.assertEqual(scan_devices(("192.168.1.2",), "admin", ""), {"192.168.1.2": status})
+        self.assertEqual(read.call_count, 2)
 
     def test_inventory_starts_empty_and_persists_sorted_unique_ips(self) -> None:
         with TemporaryDirectory() as directory:

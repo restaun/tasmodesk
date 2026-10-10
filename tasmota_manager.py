@@ -22,9 +22,12 @@ from urllib.request import Request, urlopen
 
 
 DISCOVERY_IPS = tuple(f"192.168.1.{octet}" for octet in range(1, 255))
-DISCOVERY_WORKERS = 16
+DISCOVERY_WORKERS = 128
 DISCOVERY_TIMEOUT_SECONDS = 2
-REQUEST_TIMEOUT_SECONDS = 4
+# Devices in Wi-Fi power save (or Safeboot) can take 5-9 s to answer the first request.
+DISCOVERY_RETRY_WORKERS = 254
+DISCOVERY_RETRY_TIMEOUT_SECONDS = 10
+REQUEST_TIMEOUT_SECONDS = 12
 MAX_BACKUP_SIZE = 2 * 1024 * 1024
 MIN_BACKUP_SIZE = 128
 MAX_FIRMWARE_SIZE = 4 * 1024 * 1024
@@ -50,6 +53,10 @@ class TasmotaError(Exception):
 
 class FirmwareUploadUncertain(TasmotaError):
     """The connection ended without confirming whether the upload completed."""
+
+
+class DeviceTimeout(TasmotaError):
+    """The device did not answer within the time limit; a retry may succeed."""
 
 
 class WebRequestUnavailable(TasmotaError):
@@ -405,6 +412,8 @@ class TasmotaClient:
             raise TasmotaError(f"{ip}: error HTTP {error.code}.") from None
         except (TimeoutError, URLError, OSError) as error:
             reason = getattr(error, "reason", error)
+            if isinstance(error, TimeoutError) or isinstance(reason, TimeoutError):
+                raise DeviceTimeout(f"{ip}: no responde (tiempo de espera agotado).") from None
             raise TasmotaError(f"{ip}: no responde ({reason}).") from None
 
         try:
@@ -610,7 +619,12 @@ def scan_devices(
         return results
 
     def scan(ip: str) -> DeviceStatus:
-        return TasmotaClient(username, password).read_status(ip)
+        client = TasmotaClient(username, password)
+        try:
+            return client.read_status(ip)
+        except DeviceTimeout:
+            # The first request usually wakes a device in Wi-Fi power save.
+            return client.read_status(ip)
 
     with ThreadPoolExecutor(max_workers=min(DISCOVERY_WORKERS, len(ips))) as executor:
         futures = {executor.submit(scan, ip): ip for ip in ips}
@@ -633,12 +647,26 @@ def discover_tasmotas(
     username: str, password: str,
     progress: Callable[[int, int], None] | None = None,
     ips: tuple[str, ...] = DISCOVERY_IPS,
+    known: tuple[str, ...] = (),
 ) -> DiscoveryResult:
+    """Fast sweep, then a slower second pass only for addresses that timed out.
+
+    Saved devices (``known``) get the full request timeout and one extra attempt.
+    """
     devices: dict[str, DeviceStatus] = {}
     errors: dict[str, str] = {}
+    timed_out: list[str] = []
 
-    def probe(ip: str) -> DeviceStatus:
-        client = TasmotaClient(username, password, timeout=DISCOVERY_TIMEOUT_SECONDS)
+    def probe(ip: str, timeout: int) -> DeviceStatus:
+        try:
+            return probe_once(ip, timeout)
+        except DeviceTimeout:
+            if timeout != REQUEST_TIMEOUT_SECONDS:
+                raise
+            return probe_once(ip, timeout)
+
+    def probe_once(ip: str, timeout: int) -> DeviceStatus:
+        client = TasmotaClient(username, password, timeout=timeout)
         response = client.command(ip, "Status 0")
         firmware = response.get("StatusFWR")
         if (
@@ -649,16 +677,35 @@ def discover_tasmotas(
             raise TasmotaError(f"{ip}: no se identificó firmware Tasmota.")
         return parse_device_status(ip, response, client.command(ip, "Status 11"))
 
-    with ThreadPoolExecutor(max_workers=DISCOVERY_WORKERS) as executor:
-        futures = {executor.submit(probe, ip): ip for ip in ips}
-        for completed, future in enumerate(as_completed(futures), 1):
-            ip = futures[future]
-            try:
-                devices[ip] = future.result()
-            except TasmotaError as error:
-                errors[ip] = str(error)
-            if progress is not None:
-                progress(completed, len(ips))
+    completed = 0
+    total = len(ips)
+
+    def run(targets: list[str], workers: int, timeout_for: Callable[[str], int], retry: bool) -> None:
+        nonlocal completed
+        if not targets:
+            return
+        with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as executor:
+            futures = {executor.submit(probe, ip, timeout_for(ip)): ip for ip in targets}
+            for future in as_completed(futures):
+                ip = futures[future]
+                completed += 1
+                try:
+                    devices[ip] = future.result()
+                    errors.pop(ip, None)
+                except DeviceTimeout as error:
+                    errors[ip] = str(error)
+                    if retry:
+                        timed_out.append(ip)
+                except TasmotaError as error:
+                    errors[ip] = str(error)
+                if progress is not None:
+                    progress(completed, total)
+
+    run(list(ips), DISCOVERY_WORKERS, lambda ip: DISCOVERY_TIMEOUT_SECONDS, True)
+    total += len(timed_out)
+    saved = set(known)
+    run(timed_out, DISCOVERY_RETRY_WORKERS,
+        lambda ip: REQUEST_TIMEOUT_SECONDS if ip in saved else DISCOVERY_RETRY_TIMEOUT_SECONDS, False)
     return DiscoveryResult(devices, errors)
 
 
