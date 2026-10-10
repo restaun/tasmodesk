@@ -381,10 +381,11 @@ class FirmwareFileTests(unittest.TestCase):
             "ESP32-D0WD-V3 rev.3", "", None, None, (),
         )
         self.assertTrue(firmware_file_update_available(status, self.release))
-        self.assertFalse(firmware_update_available(status, self.release))
+        self.assertTrue(firmware_update_available(status, self.release))
         self.assertFalse(firmware_release_installed(status, self.release))
         other = DeviceStatus(**{**status.__dict__, "hardware": "ESP32-C3"})
         self.assertFalse(firmware_file_update_available(other, self.release))
+        self.assertFalse(firmware_update_available(other, self.release))
 
     def test_prepares_normal_firmware_with_webui_safeboot_handshake(self) -> None:
         client = TasmotaClient()
