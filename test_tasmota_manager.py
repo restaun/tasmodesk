@@ -138,29 +138,29 @@ class DeviceDiscoveryTests(unittest.TestCase):
 class BuildCommandUrlTests(unittest.TestCase):
     def test_encodes_spaces_and_authentication_parameters(self) -> None:
         url = build_command_url(
-            "192.168.1.110",
+            "192.168.1.50",
             "FriendlyName1 Luz principal",
             "admin",
             "pass & word",
         )
         self.assertEqual(
             url,
-            "http://192.168.1.110/cm?user=admin&password=pass+%26+word"
+            "http://192.168.1.50/cm?user=admin&password=pass+%26+word"
             "&cmnd=FriendlyName1+Luz+principal",
         )
 
     def test_omits_empty_password_parameters(self) -> None:
-        url = build_command_url("192.168.1.110", "Status 0")
-        self.assertEqual(url, "http://192.168.1.110/cm?cmnd=Status+0")
+        url = build_command_url("192.168.1.50", "Status 0")
+        self.assertEqual(url, "http://192.168.1.50/cm?cmnd=Status+0")
 
 
 class ParseDeviceStatusTests(unittest.TestCase):
     def test_extracts_identity_wifi_and_relay_names(self) -> None:
         result = parse_device_status(
-            "192.168.1.110",
+            "192.168.1.50",
             {
                 "Status": {
-                    "DeviceName": "Baño",
+                    "DeviceName": "Jardín",
                     "FriendlyName": ["Calefacción", "Luz"],
                 },
                 "StatusFWR": {
@@ -180,8 +180,8 @@ class ParseDeviceStatusTests(unittest.TestCase):
         self.assertEqual(
             result,
             DeviceStatus(
-                ip="192.168.1.110",
-                name="Baño",
+                ip="192.168.1.50",
+                name="Jardín",
                 version="15.4.0(release-tasmota32)",
                 hardware="ESP32-D0WD-V3 v3.0",
                 uptime="0T00:23:17",
@@ -196,11 +196,11 @@ class ParseDeviceStatusTests(unittest.TestCase):
 
     def test_rejects_incomplete_status_response(self) -> None:
         with self.assertRaises(TasmotaError):
-            parse_device_status("192.168.1.110", {}, {})
+            parse_device_status("192.168.1.50", {}, {})
 
     def test_uses_default_output_name_when_not_configured(self) -> None:
         result = parse_device_status(
-            "192.168.1.110",
+            "192.168.1.50",
             {"Status": {}, "StatusFWR": {}},
             {"StatusSTS": {"POWER3": "OFF"}},
         )
@@ -210,8 +210,8 @@ class ParseDeviceStatusTests(unittest.TestCase):
 class FirmwareUpdateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.status = DeviceStatus(
-            ip="192.168.1.110",
-            name="Baño",
+            ip="192.168.1.50",
+            name="Jardín",
             version="15.4.0(release-tasmota32)",
             hardware="ESP32-D0WD-V3 v3.0",
             uptime="0T00:23:17",
@@ -286,21 +286,21 @@ class FirmwareUpdateTests(unittest.TestCase):
         client = TasmotaClient()
         with patch.object(client, "command", return_value={}) as command:
             client.start_firmware_upgrade(
-                "192.168.1.110", FirmwareRelease("15.6.0").url
+                "192.168.1.50", FirmwareRelease("15.6.0").url
             )
             self.assertEqual(
                 command.call_args_list,
                 [
                     call(
-                        "192.168.1.110",
+                        "192.168.1.50",
                         "OtaUrl http://ota.tasmota.com/tasmota32/release/tasmota32.bin",
                     ),
-                    call("192.168.1.110", "Upgrade 1"),
+                    call("192.168.1.50", "Upgrade 1"),
                 ],
             )
             with self.assertRaises(TasmotaError):
                 client.start_firmware_upgrade(
-                    "192.168.1.110", "http://example.com/fw.bin"
+                    "192.168.1.50", "http://example.com/fw.bin"
                 )
 
 
@@ -377,7 +377,7 @@ class FirmwareFileTests(unittest.TestCase):
 
     def test_allows_safeboot_recovery_only_on_matching_hardware(self) -> None:
         status = DeviceStatus(
-            "192.168.1.110", "Baño", "12.1.0(safeboot)",
+            "192.168.1.50", "Jardín", "12.1.0(safeboot)",
             "ESP32-D0WD-V3 rev.3", "", None, None, (),
         )
         self.assertTrue(firmware_file_update_available(status, self.release))
@@ -394,20 +394,20 @@ class FirmwareFileTests(unittest.TestCase):
             "false", WebRequestUnavailable("restarting"), "true",
             '<input name="u2">',
         ]) as request, patch("tasmota_manager.time.sleep"):
-            client.prepare_firmware_upload("192.168.1.110")
+            client.prepare_firmware_upload("192.168.1.50")
         self.assertEqual(request.call_args_list, [
-            call("192.168.1.110", "/up"),
-            call("192.168.1.110", "/u4?u4=fct&api="),
-            call("192.168.1.110", "/u4?u4=fct&api="),
-            call("192.168.1.110", "/u4?u4=fct&api="),
-            call("192.168.1.110", "/up"),
+            call("192.168.1.50", "/up"),
+            call("192.168.1.50", "/u4?u4=fct&api="),
+            call("192.168.1.50", "/u4?u4=fct&api="),
+            call("192.168.1.50", "/u4?u4=fct&api="),
+            call("192.168.1.50", "/up"),
         ])
 
     def test_does_not_prepare_or_upload_when_webui_denies_access(self) -> None:
         client = TasmotaClient()
         with patch.object(client, "_web_request", side_effect=TasmotaError("HTTP 401")) as request:
             with self.assertRaisesRegex(TasmotaError, "401"):
-                client.prepare_firmware_upload("192.168.1.110")
+                client.prepare_firmware_upload("192.168.1.50")
         self.assertEqual(request.call_count, 1)
 
     def test_upload_uses_file_field_size_authentication_and_binary(self) -> None:
@@ -418,13 +418,13 @@ class FirmwareFileTests(unittest.TestCase):
             with patch("tasmota_manager.urlopen", return_value=io.BytesIO(
                 b"<b>Upload <font color='#008000'>Successful</font></b>"
             )) as request:
-                client.upload_firmware_file("192.168.1.110", path)
+                client.upload_firmware_file("192.168.1.50", path)
         sent = request.call_args.args[0]
         self.assertEqual(sent.get_method(), "POST")
-        self.assertEqual(sent.full_url, f"http://192.168.1.110/u2?fsz={len(self.image)}")
+        self.assertEqual(sent.full_url, f"http://192.168.1.50/u2?fsz={len(self.image)}")
         self.assertIn(b'name="u2"; filename="tasmota32.bin"', sent.data)
         self.assertIn(self.image, sent.data)
-        self.assertEqual(sent.get_header("Referer"), "http://192.168.1.110/up")
+        self.assertEqual(sent.get_header("Referer"), "http://192.168.1.50/up")
         self.assertTrue(sent.get_header("Authorization").startswith("Basic "))
 
     def test_upload_rejects_webui_failure_even_with_http_success(self) -> None:
@@ -435,7 +435,7 @@ class FirmwareFileTests(unittest.TestCase):
                 b"<b>Upload Failed</b>Not enough space"
             )):
                 with self.assertRaisesRegex(TasmotaError, "Not enough space"):
-                    TasmotaClient().upload_firmware_file("192.168.1.110", path)
+                    TasmotaClient().upload_firmware_file("192.168.1.50", path)
 
     def test_upload_accepts_official_spanish_success_but_not_failure(self) -> None:
         with TemporaryDirectory() as folder:
@@ -444,12 +444,12 @@ class FirmwareFileTests(unittest.TestCase):
             with patch("tasmota_manager.urlopen", return_value=io.BytesIO(
                 b"<b>Carga <font color='#008000'>Exitosa</font></b>"
             )):
-                TasmotaClient().upload_firmware_file("192.168.1.110", path)
+                TasmotaClient().upload_firmware_file("192.168.1.50", path)
             with patch("tasmota_manager.urlopen", return_value=io.BytesIO(
                 b"<b>Carga fallida</b>Espacio insuficiente"
             )):
                 with self.assertRaises(TasmotaError):
-                    TasmotaClient().upload_firmware_file("192.168.1.110", path)
+                    TasmotaClient().upload_firmware_file("192.168.1.50", path)
 
     def test_connection_loss_during_upload_is_explicitly_uncertain(self) -> None:
         with TemporaryDirectory() as folder:
@@ -457,7 +457,7 @@ class FirmwareFileTests(unittest.TestCase):
             path.write_bytes(self.image)
             with patch("tasmota_manager.urlopen", side_effect=TimeoutError("timeout")):
                 with self.assertRaises(FirmwareUploadUncertain):
-                    TasmotaClient().upload_firmware_file("192.168.1.110", path)
+                    TasmotaClient().upload_firmware_file("192.168.1.50", path)
 
 
 
@@ -476,7 +476,7 @@ class FirmwareFileTests(unittest.TestCase):
 class DimmerAndLanguageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.status = DeviceStatus(
-            "192.168.1.111", "Comedor", "15.6.0(release-tasmota32)",
+            "192.168.1.51", "Garaje", "15.6.0(release-tasmota32)",
             "ESP32-D0WD-V3 rev.3", "", None, None,
             (RelayStatus(1, "Luz", "OFF"), RelayStatus(2, "Intensidad", "ON")),
             dimmer=20, language_lcid=2057,
@@ -497,7 +497,7 @@ class DimmerAndLanguageTests(unittest.TestCase):
     def test_parses_eight_digit_locale_from_safeboot(self) -> None:
         status = parse_device_status(
             self.status.ip,
-            {"Status": {"DeviceName": "Comedor"},
+            {"Status": {"DeviceName": "Garaje"},
              "StatusFWR": {"Version": "12.1.0(safeboot)", "Hardware": "ESP32-D0WD-V3 rev.3"},
              "StatusMEM": {"Features": ["00000809", "008005C0"]}},
             {"StatusSTS": {}},
@@ -567,20 +567,20 @@ class ConfigurationBackupTests(unittest.TestCase):
         with TemporaryDirectory() as temp_dir:
             with patch("tasmota_manager.urlopen", return_value=response) as urlopen_mock:
                 backup_path = client.download_configuration_backup(
-                    "192.168.1.110",
-                    "Baño principal",
+                    "192.168.1.50",
+                    "Jardín principal",
                     Path(temp_dir),
                 )
 
             request = urlopen_mock.call_args.args[0]
-            self.assertEqual(request.full_url, "http://192.168.1.110/dl")
-            self.assertEqual(request.get_header("Referer"), "http://192.168.1.110/")
+            self.assertEqual(request.full_url, "http://192.168.1.50/dl")
+            self.assertEqual(request.get_header("Referer"), "http://192.168.1.50/")
             self.assertEqual(
                 request.get_header("Authorization"),
                 "Basic " + base64.b64encode(b"admin:secret").decode("ascii"),
             )
             self.assertEqual(backup_path.suffix, ".dmp")
-            self.assertIn("Ba_o_principal", backup_path.name)
+            self.assertIn("Jard_n_principal", backup_path.name)
             self.assertEqual(backup_path.read_bytes(), b"\x00" * 1024)
             self.assertEqual(list(Path(temp_dir).glob("*.tmp")), [])
 
@@ -592,7 +592,7 @@ class ConfigurationBackupTests(unittest.TestCase):
             with patch("tasmota_manager.urlopen", return_value=response):
                 with self.assertRaises(TasmotaError):
                     TasmotaClient().download_configuration_backup(
-                        "192.168.1.110", "Baño", Path(temp_dir)
+                        "192.168.1.50", "Jardín", Path(temp_dir)
                     )
             self.assertEqual(list(Path(temp_dir).iterdir()), [])
 
@@ -609,15 +609,15 @@ class ConfigurationBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(TasmotaError, "no backup"):
                 backup_before_firmware_upgrade(
                     client,
-                    "192.168.1.110",
-                    "Baño",
+                    "192.168.1.50",
+                    "Jardín",
                     FirmwareRelease("15.6.0").url,
                 )
             upgrade.assert_not_called()
 
     def test_failed_upgrade_reports_saved_backup_path(self) -> None:
         client = TasmotaClient()
-        backup_path = Path("backups/baño.dmp")
+        backup_path = Path("backups/jardín.dmp")
         with (
             patch.object(
                 client,
@@ -630,11 +630,11 @@ class ConfigurationBackupTests(unittest.TestCase):
                 side_effect=TasmotaError("upgrade failed"),
             ),
         ):
-            with self.assertRaisesRegex(TasmotaError, "baño.dmp"):
+            with self.assertRaisesRegex(TasmotaError, "jardín.dmp"):
                 backup_before_firmware_upgrade(
                     client,
-                    "192.168.1.110",
-                    "Baño",
+                    "192.168.1.50",
+                    "Jardín",
                     FirmwareRelease("15.6.0").url,
                 )
 

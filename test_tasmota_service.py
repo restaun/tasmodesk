@@ -20,7 +20,7 @@ class ServiceTests(unittest.TestCase):
         self.service.executor.shutdown()
         self.service.executor = Mock()
         self.status = DeviceStatus(
-            "192.168.1.111", "Comedor", "15.4.0(release-tasmota32)",
+            "192.168.1.51", "Garaje", "15.4.0(release-tasmota32)",
             "ESP32-D0WD-V3", "", 85, -50,
             (RelayStatus(1, "Luz", "ON"), RelayStatus(2, "Intensidad", "ON")), 20, 2057,
         )
@@ -93,9 +93,9 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.service.events.get_nowait(), ("error", "sin conexión"))
 
     def test_bulk_schedules_all_jobs_with_captured_language_and_credentials(self) -> None:
-        second = DeviceStatus(**{**self.status.__dict__, "ip": "192.168.1.112"})
+        second = DeviceStatus(**{**self.status.__dict__, "ip": "192.168.1.52"})
         self.service.devices[second.ip] = second
-        self.service.devices["192.168.1.113"] = "offline"
+        self.service.devices["192.168.1.53"] = "offline"
         self.service.start_updates(by_file=True)
         self.assertEqual(self.service.executor.submit.call_count, 2)
         self.assertEqual(self.service.running_updates(), {self.status.ip, second.ip})
@@ -307,7 +307,7 @@ class ServiceTests(unittest.TestCase):
         state = self.service.snapshot()
         row = state["devices"][0]
         self.assertFalse(row["available"])
-        self.assertEqual(row["name"], "Comedor")
+        self.assertEqual(row["name"], "Garaje")
         self.assertEqual(row["last_read"], before)
         self.assertTrue(row["updating"])
         self.assertEqual(state["jobs"][0]["backup"], "copy.dmp")
@@ -355,7 +355,7 @@ class ServiceTests(unittest.TestCase):
                 with self.assertRaises(TasmotaError):
                     failed.get(release)
             fetch.assert_called_once()
-        second = DeviceStatus(**{**self.status.__dict__, "ip": "192.168.1.112"})
+        second = DeviceStatus(**{**self.status.__dict__, "ip": "192.168.1.52"})
         self.service.devices[second.ip] = second
         self.service.start_updates(by_file=True)
         jobs = list(self.service.jobs.values())
@@ -365,10 +365,10 @@ class ServiceTests(unittest.TestCase):
         with TemporaryDirectory() as folder, patch.object(
             self.service, "backup_directory", return_value=Path(folder)
         ):
-            correct = Path(folder) / "Comedor_192.168.1.111_20261010.dmp"
+            correct = Path(folder) / "Garaje_192.168.1.51_20261010.dmp"
             correct.write_bytes(b"\0" * 1024)
-            (Path(folder) / "Other_192.168.1.112_20261010.dmp").write_bytes(b"\0")
-            (Path(folder) / "Comedor_192.168.1.111_error.html").write_text("error")
+            (Path(folder) / "Other_192.168.1.52_20261010.dmp").write_bytes(b"\0")
+            (Path(folder) / "Garaje_192.168.1.51_error.html").write_text("error")
             copies = self.service.list_backups(self.status.ip)
             self.assertEqual(len(copies), 1)
             self.assertEqual(copies[0]["name"], correct.name)
@@ -391,7 +391,7 @@ class ServiceTests(unittest.TestCase):
             self.service.release = None
             message, digest = self.service.local_update_confirmation(str(source), self.status.ip)
             self.assertIn(digest, message)
-            self.assertIn("Comedor (192.168.1.111)", message)
+            self.assertIn("Garaje (192.168.1.51)", message)
             self.service.start_local_updates(str(source), digest, self.status.ip)
             job = self.service.jobs[self.status.ip]
             copy = job.firmware.path
@@ -446,7 +446,7 @@ class ServiceTests(unittest.TestCase):
                 self.service.change(self.status.ip, "power", "OFF", 1)
             self.run_submitted()
             refresh()
-        self.assertEqual(self.service.devices[self.status.ip].name, "Comedor")
+        self.assertEqual(self.service.devices[self.status.ip].name, "Garaje")
         self.assertEqual(self.service.busy, "")
         with patch("tasmota_service.discover_tasmotas"):
             self.service.discover()

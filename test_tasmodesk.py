@@ -29,7 +29,7 @@ class NativeWindowTests(unittest.TestCase):
         self.window.timer.stop()
         self.window.show()
         self.app.processEvents()
-        self.ip = "192.168.1.111"
+        self.ip = "192.168.1.51"
 
     def tearDown(self) -> None:
         for job in self.service.jobs.values():
@@ -61,7 +61,7 @@ class NativeWindowTests(unittest.TestCase):
         self.window.resize(900, 650)
         QTest.qWait(50)
         self.assertEqual(self.window.device_scroll.horizontalScrollBar().maximum(), 0)
-        self.assertEqual(self.window.grid.itemAtPosition(0, 0).widget(), self.window.cards["192.168.1.110"])
+        self.assertEqual(self.window.grid.itemAtPosition(0, 0).widget(), self.window.cards["192.168.1.50"])
 
     def test_power_single_button_sends_opposite_and_blocks_duplicates(self) -> None:
         from PySide6.QtWidgets import QPushButton
@@ -127,48 +127,48 @@ class NativeWindowTests(unittest.TestCase):
             send.assert_called_once_with(self.ip, "dimmer", final_value, 0)
         self.window.navigate("Configuración")
         with patch.object(self.service, "change", side_effect=ValueError("Error de envío")):
-            self.window.save_name(self.ip, 0, "Comedor")
+            self.window.save_name(self.ip, 0, "Garaje")
         self.assertIn((self.ip, 0), self.window.drafts)
         self.assertFalse(self.window.drafts[(self.ip, 0)].saving)
 
     def test_drafts_survive_refresh_navigation_and_failed_save(self) -> None:
         from PySide6.QtWidgets import QLineEdit
         self.window.navigate("Configuración")
-        self.window.edit_name((self.ip, 0), "Comedor", "Nuevo comedor")
+        self.window.edit_name((self.ip, 0), "Garaje", "Nuevo garaje")
         self.service._touch()
         self.window.poll()
-        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo comedor")
+        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo garaje")
         self.window.navigate("Dispositivos")
         self.window.navigate("Configuración")
-        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo comedor")
+        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo garaje")
         with patch.object(self.service, "change", side_effect=ValueError("No se pudo guardar")):
-            self.window.save_name(self.ip, 0, "Nuevo comedor")
+            self.window.save_name(self.ip, 0, "Nuevo garaje")
         self.assertFalse(self.window.drafts[(self.ip, 0)].saving)
         self.assertTrue(self.window.notifications)
-        self.assertEqual(self.window.drafts[(self.ip, 0)].value, "Nuevo comedor")
+        self.assertEqual(self.window.drafts[(self.ip, 0)].value, "Nuevo garaje")
         self.window.discard_name((self.ip, 0))
-        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Comedor")
+        self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Garaje")
 
     def test_saving_draft_waits_for_confirmed_read_and_retains_offline_failure(self) -> None:
         from tasmodesk import Draft
-        self.window.drafts[(self.ip, 0)] = Draft("Nuevo comedor", True)
+        self.window.drafts[(self.ip, 0)] = Draft("Nuevo garaje", True)
         self.service.pending.add(self.ip)
         self.window.poll()
         self.assertIn((self.ip, 0), self.window.drafts)
         previous = self.service.last_status[self.ip]
-        self.service._record_status(self.ip, replace(previous, name="Nuevo comedor"))
+        self.service._record_status(self.ip, replace(previous, name="Nuevo garaje"))
         self.service.pending.clear()
         self.service._touch()
         self.window.poll()
         self.assertNotIn((self.ip, 0), self.window.drafts)
-        self.window.drafts[(self.ip, 0)] = Draft("Nuevo comedor", True)
+        self.window.drafts[(self.ip, 0)] = Draft("Nuevo garaje", True)
         self.service._record_status(self.ip, "Sin conexión")
         self.service._touch()
         self.window.poll()
         self.assertFalse(self.window.drafts[(self.ip, 0)].saving)
 
     def test_search_filters_and_offline_cached_name(self) -> None:
-        self.window.search.setText("comedor")
+        self.window.search.setText("garaje")
         self.assertEqual(list(self.window.cards), [self.ip])
         self.window.search.setText("calefacción")
         self.assertEqual(len(self.window.cards), 3)
@@ -191,7 +191,7 @@ class NativeWindowTests(unittest.TestCase):
         job = UpdateJob(self.ip, self.service.selected_release(), True)
         job.progress = 72
         job.message = "Esperando reinicio"
-        job.backup = "Copia_192.168.1.111.dmp"
+        job.backup = "Copia_192.168.1.51.dmp"
         job.logs = ["Copia guardada", "Firmware subido"]
         self.service.jobs[self.ip] = job
         self.service._record_status(self.ip, "Sin conexión")
