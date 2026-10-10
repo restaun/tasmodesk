@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -185,7 +186,7 @@ class NativeWindowTests(unittest.TestCase):
         self.assertEqual(len(self.window.cards), 2)
 
     def test_offline_job_keeps_progress_backup_logs_and_blocks_close(self) -> None:
-        from PySide6.QtWidgets import QLabel, QTextEdit, QToolButton
+        from PySide6.QtWidgets import QLabel, QProgressBar, QTextEdit, QToolButton
         from tasmota_service import UpdateJob
         job = UpdateJob(self.ip, self.service.selected_release(), True)
         job.progress = 72
@@ -213,9 +214,14 @@ class NativeWindowTests(unittest.TestCase):
         self.assertTrue(self.window.notifications)
         job.state = "success"
         job.progress = 100
+        job.finished_at = time.monotonic()
         self.service._touch()
         self.window.poll()
         self.assertEqual(self.window.job_widgets[self.ip][0].value(), 100)
+        job.finished_at = time.monotonic() - 5
+        self.window.poll()
+        self.assertNotIn(self.ip, self.window.job_widgets)
+        self.assertFalse(self.window.cards[self.ip].findChildren(QProgressBar))
 
     def test_update_requires_confirmation_and_reuses_service(self) -> None:
         with patch.object(self.window, "confirm", return_value=False), patch.object(self.service, "start_updates") as update:
