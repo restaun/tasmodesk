@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import queue
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -24,7 +26,11 @@ from tasmota_manager import (
     validate_name,
 )
 
-PREFERENCE_DEFAULTS: dict[str, str | bool] = {"theme": "light", "page": "Dispositivos", "auto_refresh": True}
+PREFERENCE_DEFAULTS: dict[str, object] = {
+    "theme": "light", "page": "Dispositivos", "auto_refresh": True, "devices": {},
+}
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 AUTO_REFRESH_SECONDS = 60
 FINISHED_JOB_SECONDS = 5
 
@@ -59,6 +65,8 @@ class DeviceEntry(TypedDict):
     updating: bool
     ota_available: bool
     file_available: bool
+    hidden: list[int]
+    image: str
 
 
 class JobEntry(TypedDict):
@@ -83,7 +91,7 @@ class ServiceSnapshot(TypedDict):
     language: str
     demo: bool
     inventory_error: str
-    preferences: dict[str, str | bool]
+    preferences: dict[str, object]
     auto_refresh_seconds: int
     auto_refresh_paused: bool
 
@@ -163,7 +171,7 @@ class TasmotaService:
         self.preferences_path = preferences_path or (
             Path.home() / "Documents" / "TasmotaManager" / "preferences.json"
         )
-        self.preferences = dict(PREFERENCE_DEFAULTS)
+        self.preferences = copy.deepcopy(PREFERENCE_DEFAULTS)
         self.preferences_error = ""
         if not demo:
             try:
@@ -210,8 +218,19 @@ class TasmotaService:
             raise TasmotaError("Página no válida.")
         if "auto_refresh" in values and type(values["auto_refresh"]) is not bool:
             raise TasmotaError("Refresco automático no válido.")
+        if "devices" in values:
+            devices = values["devices"]
+            if not isinstance(devices, dict):
+                raise TasmotaError("Preferencias de dispositivos no válidas.")
+            for ip, entry in devices.items():
+                if (not isinstance(ip, str) or not isinstance(entry, dict)
+                        or set(entry) - {"hidden", "image"}
+                        or not isinstance(entry.get("hidden", []), list)
+                        or any(type(n) is not int for n in entry.get("hidden", []))
+                        or not isinstance(entry.get("image", ""), str)):
+                    raise TasmotaError("Preferencias de dispositivos no válidas.")
 
-    def set_preferences(self, values: dict[str, str | bool]) -> None:
+    def set_preferences(self, values: dict[str, object]) -> None:
         self._validate_preferences(values)
         with self.lock:
             if self.preferences_error:
@@ -244,6 +263,88 @@ class TasmotaService:
         if isinstance(result, DeviceStatus):
             self.last_status[ip] = result
             self.last_read[ip] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def remove_device(self, ip: str) -> None:
+        with self.lock:
+            if self.demo:
+                raise TasmotaError("Vista de demostración: no se modifica el inventario.")
+            if self.inventory_error:
+                raise TasmotaError(self.inventory_error + " No se sobrescribirá el inventario.")
+            if ip not in self.devices:
+                raise TasmotaError("Dispositivo no guardado.")
+            if self.busy or ip in self.pending or ip in self.running_updates():
+                raise TasmotaError("Espera a que termine la operación antes de eliminar el dispositivo.")
+            save_device_inventory(tuple(address for address in self.devices if address != ip))
+            del self.devices[ip]
+            self.last_status.pop(ip, None)
+            self.last_read.pop(ip, None)
+            self.change_serial.pop(ip, None)
+            self.jobs.pop(ip, None)
+            self._touch()
+        self._notify("info", "Dispositivo eliminado de TasmoDesk. Sus copias se conservan.")
+
+    def image_directory(self) -> Path:
+        return self.preferences_path.parent / "images"
+
+    def _device_display(self, ip: str) -> dict[str, object]:
+        if ip not in self.devices:
+            raise TasmotaError("Dispositivo no guardado.")
+        devices = self.preferences["devices"]
+        assert isinstance(devices, dict)
+        return copy.deepcopy(devices.get(ip, {}))
+
+    def _save_device_display(self, ip: str, entry: dict[str, object]) -> None:
+        devices = copy.deepcopy(self.preferences["devices"])
+        assert isinstance(devices, dict)
+        entry = {key: value for key, value in entry.items() if value}
+        if entry:
+            devices[ip] = entry
+        else:
+            devices.pop(ip, None)
+        self.set_preferences({"devices": devices})
+
+    def set_output_visible(self, ip: str, number: int, visible: bool) -> None:
+        with self.lock:
+            entry = self._device_display(ip)
+            hidden = set(entry.get("hidden", []))  # type: ignore[arg-type]
+            if visible:
+                hidden.discard(number)
+            else:
+                hidden.add(number)
+            entry["hidden"] = sorted(hidden)
+            self._save_device_display(ip, entry)
+
+    def set_device_image(self, ip: str, source: str) -> None:
+        """Copy the chosen picture next to the preferences, or remove it when source is empty."""
+        with self.lock:
+            entry = self._device_display(ip)
+            previous = Path(str(entry.get("image", ""))) if entry.get("image") else None
+            folder = self.image_directory()
+            stored = ""
+            if source:
+                path = Path(source)
+                if path.suffix.lower() not in IMAGE_SUFFIXES:
+                    raise TasmotaError("Elige una imagen PNG, JPG, WEBP o BMP.")
+                try:
+                    if not path.is_file() or path.stat().st_size > MAX_IMAGE_BYTES:
+                        raise TasmotaError("La imagen no existe o supera 5 MB.")
+                    if self.demo:
+                        stored = str(path)
+                    else:
+                        folder.mkdir(parents=True, exist_ok=True)
+                        target = folder / (ip.replace(".", "-") + path.suffix.lower())
+                        if path.resolve() != target.resolve():
+                            shutil.copyfile(path, target)
+                        stored = str(target)
+                except OSError as error:
+                    raise TasmotaError(f"No se pudo guardar la imagen: {error}") from None
+            entry["image"] = stored
+            self._save_device_display(ip, entry)
+            if previous and str(previous) != stored and previous.parent == folder:
+                try:
+                    previous.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def auto_refresh_tick(self) -> None:
         with self.lock:
@@ -291,9 +392,12 @@ class TasmotaService:
                     del self.jobs[ip]
                     self._touch()
             release = self.selected_release()
+            displays = self.preferences["devices"]
+            assert isinstance(displays, dict)
             rows: list[DeviceEntry] = []
             for ip, result in sorted(self.devices.items(), key=lambda item: int(item[0].split(".")[-1])):
                 known = result if isinstance(result, DeviceStatus) else self.last_status.get(ip)
+                display = displays.get(ip, {})
                 row: DeviceEntry = {
                     "ip": ip, "name": known.name if known else ip,
                     "version": known.version if known else "",
@@ -314,6 +418,8 @@ class TasmotaService:
                                           and firmware_update_available(result, release)),
                     "file_available": bool(release and isinstance(result, DeviceStatus)
                                            and firmware_file_update_available(result, release)),
+                    "hidden": list(display.get("hidden", [])),
+                    "image": str(display.get("image", "")),
                 }
                 rows.append(row)
             jobs: list[JobEntry] = []
@@ -337,7 +443,7 @@ class TasmotaService:
                 "release_url": release.url if release else "",
                 "language": self.language, "demo": self.demo,
                 "inventory_error": self.inventory_error,
-                "preferences": dict(self.preferences),
+                "preferences": copy.deepcopy(self.preferences),
                 "auto_refresh_seconds": AUTO_REFRESH_SECONDS,
                 "auto_refresh_paused": bool(self.busy or self.pending or self.running_updates()),
             }

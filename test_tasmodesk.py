@@ -41,6 +41,61 @@ class NativeWindowTests(unittest.TestCase):
         self.app.processEvents()
         self.directory.cleanup()
 
+    def test_remove_offline_device_requires_confirmation_and_removes_card(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+        self.service._record_status(self.ip, "Sin conexión")
+        self.service._touch()
+        self.window.navigate("Configuración")
+        control = self.window.cards[self.ip].findChild(QPushButton, "remove-" + self.ip)
+        self.assertTrue(control.isEnabled())
+        with patch.object(self.window, "confirm", return_value=False), patch(
+            "tasmota_service.save_device_inventory"
+        ) as save:
+            control.click()
+            save.assert_not_called()
+        self.assertIn(self.ip, self.service.devices)
+        with patch.object(self.window, "confirm", return_value=True), patch(
+            "tasmota_service.save_device_inventory"
+        ) as save:
+            control.click()
+            save.assert_called_once()
+        self.assertNotIn(self.ip, self.service.devices)
+        self.assertNotIn(self.ip, self.window.cards)
+
+    def test_compact_cards_search_popup_visibility_and_image(self) -> None:
+        from PySide6.QtGui import QColor, QPixmap
+        from PySide6.QtWidgets import QCheckBox, QLabel, QPushButton, QSlider
+        texts = [l.text() for l in self.window.cards[self.ip].findChildren(QLabel)]
+        self.assertNotIn(self.ip, texts)
+        self.assertFalse(any("Última lectura" in text for text in texts))
+        self.assertFalse(any(b.text() == "Abrir WebUI" for b in self.window.grid_widget.findChildren(QPushButton)))
+        self.assertFalse(self.window.search.isVisible())
+        self.window.search_button.click()
+        self.assertTrue(self.window.search_popup.isVisible())
+        self.window.search.setText("garaje")
+        self.assertEqual(list(self.window.cards), [self.ip])
+        self.window.search_popup.hide()
+        self.app.processEvents()
+        self.assertTrue(self.window.search_button.isChecked())
+        self.window.search.clear()
+        self.assertFalse(self.window.search_button.isChecked())
+        self.window.navigate("Configuración")
+        self.assertTrue(any(b.text() == "Abrir WebUI" for b in self.window.cards[self.ip].findChildren(QPushButton)))
+        self.window.findChild(QCheckBox, f"show-{self.ip}-1").setChecked(False)
+        self.window.findChild(QCheckBox, f"show-{self.ip}-3").setChecked(False)
+        self.assertFalse(self.window.findChild(QCheckBox, f"show-{self.ip}-1").isChecked())
+        picture = Path(self.directory.name) / "modelo.png"
+        image = QPixmap(40, 40)
+        image.fill(QColor("gray"))
+        self.assertTrue(image.save(str(picture)))
+        self.service.set_device_image(self.ip, str(picture))
+        self.window.navigate("Dispositivos")
+        card = self.window.cards[self.ip]
+        self.assertIsNone(card.findChild(QPushButton, f"power-{self.ip}-1"))
+        self.assertIsNotNone(card.findChild(QPushButton, f"power-{self.ip}-2"))
+        self.assertFalse(card.findChildren(QSlider))
+        self.assertIsNotNone(card.findChild(QLabel, "image-" + self.ip))
+
     def test_three_pages_native_layout_and_responsive_grid(self) -> None:
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QLineEdit, QPushButton, QSlider
