@@ -46,7 +46,8 @@ class NativeWindowTests(unittest.TestCase):
         self.service._record_status(self.ip, "Sin conexión")
         self.service._touch()
         self.window.navigate("Configuración")
-        control = self.window.cards[self.ip].findChild(QPushButton, "remove-" + self.ip)
+        self.window.open_config(self.ip)
+        control = self.window.config_dialog.findChild(QPushButton, "remove-" + self.ip)
         self.assertTrue(control.isEnabled())
         with patch.object(self.window, "confirm", return_value=False), patch(
             "tasmota_service.save_device_inventory"
@@ -61,6 +62,7 @@ class NativeWindowTests(unittest.TestCase):
             save.assert_called_once()
         self.assertNotIn(self.ip, self.service.devices)
         self.assertNotIn(self.ip, self.window.cards)
+        self.assertFalse(self.window.config_dialog.isVisible())
 
     def test_compact_cards_search_popup_visibility_and_image(self) -> None:
         from PySide6.QtGui import QColor, QPixmap
@@ -80,7 +82,10 @@ class NativeWindowTests(unittest.TestCase):
         self.window.search.clear()
         self.assertFalse(self.window.search_button.isChecked())
         self.window.navigate("Configuración")
-        self.assertTrue(any(b.text() == "Abrir WebUI" for b in self.window.cards[self.ip].findChildren(QPushButton)))
+        self.assertFalse(self.window.cards[self.ip].findChildren(QCheckBox))
+        self.window.open_config(self.ip)
+        self.assertTrue(self.window.config_dialog.isVisible())
+        self.assertTrue(any(b.text() == "Abrir WebUI" for b in self.window.config_dialog.findChildren(QPushButton)))
         self.window.findChild(QCheckBox, f"show-{self.ip}-1").setChecked(False)
         self.window.findChild(QCheckBox, f"show-{self.ip}-3").setChecked(False)
         self.assertFalse(self.window.findChild(QCheckBox, f"show-{self.ip}-1").isChecked())
@@ -89,7 +94,10 @@ class NativeWindowTests(unittest.TestCase):
         image.fill(QColor("gray"))
         self.assertTrue(image.save(str(picture)))
         self.service.set_device_image(self.ip, str(picture))
+        self.window.poll()
+        self.assertTrue(self.window.config_dialog.isVisible())
         self.window.navigate("Dispositivos")
+        self.assertFalse(self.window.config_dialog.isVisible())
         card = self.window.cards[self.ip]
         self.assertIsNone(card.findChild(QPushButton, f"power-{self.ip}-1"))
         self.assertIsNotNone(card.findChild(QPushButton, f"power-{self.ip}-2"))
@@ -97,6 +105,7 @@ class NativeWindowTests(unittest.TestCase):
         self.assertIsNotNone(card.findChild(QLabel, "image-" + self.ip))
 
     def test_three_pages_native_layout_and_responsive_grid(self) -> None:
+        from PySide6.QtCore import Qt
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QLineEdit, QPushButton, QSlider
         self.assertEqual(len(self.window.cards), 3)
@@ -107,8 +116,17 @@ class NativeWindowTests(unittest.TestCase):
         self.assertEqual(len(self.window.grid_widget.findChildren(QLineEdit)), 0)
         self.assertEqual(self.window.grid.getItemPosition(1)[1], 1)
         self.window.navigate("Configuración")
+        self.assertFalse(self.window.access_frame.isVisible())
+        self.assertTrue(self.window.access_button.isVisible())
+        self.window.access_button.click()
         self.assertTrue(self.window.access_frame.isVisible())
-        self.assertEqual(len(self.window.grid_widget.findChildren(QLineEdit)), 12)
+        self.window.access_frame.hide()
+        self.assertFalse(self.window.access_button.isChecked())
+        self.assertEqual(len(self.window.grid_widget.findChildren(QLineEdit)), 0)
+        QTest.mouseClick(self.window.cards[self.ip], Qt.MouseButton.LeftButton)
+        self.assertEqual(self.window.config_ip, self.ip)
+        self.assertEqual(len(self.window.config_dialog.findChildren(QLineEdit)), 4)
+        self.window.close_config()
         self.window.navigate("Actualizaciones")
         self.assertTrue(self.window.firmware_frame.isVisible())
         self.assertIn("15.6.0", self.window.firmware_text.text())
@@ -187,14 +205,17 @@ class NativeWindowTests(unittest.TestCase):
         self.assertFalse(self.window.drafts[(self.ip, 0)].saving)
 
     def test_drafts_survive_refresh_navigation_and_failed_save(self) -> None:
-        from PySide6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLabel, QLineEdit
         self.window.navigate("Configuración")
+        self.window.open_config(self.ip)
         self.window.edit_name((self.ip, 0), "Garaje", "Nuevo garaje")
         self.service._touch()
         self.window.poll()
         self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo garaje")
         self.window.navigate("Dispositivos")
         self.window.navigate("Configuración")
+        self.assertTrue(any("sin guardar" in l.text() for l in self.window.cards[self.ip].findChildren(QLabel)))
+        self.window.open_config(self.ip)
         self.assertEqual(self.window.findChild(QLineEdit, f"name-{self.ip}-0").text(), "Nuevo garaje")
         with patch.object(self.service, "change", side_effect=ValueError("No se pudo guardar")):
             self.window.save_name(self.ip, 0, "Nuevo garaje")
@@ -313,11 +334,12 @@ class NativeWindowTests(unittest.TestCase):
         from PySide6.QtCore import QUrl
         from PySide6.QtWidgets import QTextEdit
         self.window.navigate("Configuración")
+        self.window.open_config(self.ip)
         with patch.object(self.service, "list_backups", return_value=[
             {"name": "Copy.dmp", "size": 1024, "modified": "2026-10-10"}
         ]):
             self.window.show_backups(self.ip)
-        self.assertIn("Copy.dmp", self.window.cards[self.ip].findChild(QTextEdit).toPlainText())
+        self.assertIn("Copy.dmp", self.window.config_dialog.findChild(QTextEdit).toPlainText())
         with patch("tasmodesk.QDesktopServices.openUrl", return_value=True) as open_url:
             self.window.open_webui(self.ip)
             open_url.assert_called_once_with(QUrl("http://" + self.ip))

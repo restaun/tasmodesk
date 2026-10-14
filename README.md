@@ -33,8 +33,8 @@ Las credenciales solo permanecen en la memoria del programa.
   iluminación multicanal independiente.
   La intensidad se envía al soltar el ratón o la tecla; la rueda
   espera 500 ms sin nuevos movimientos antes de enviar un único valor.
-- **Configuración**: usuario y contraseña WebUI opcionales, aplicados a todos
-  los equipos y mantenidos solo en memoria; información de firmware, hardware,
+- **Configuración**: usuario y contraseña WebUI opcionales en el bocadillo 🔑,
+  aplicados a todos los equipos y mantenidos solo en memoria; información de firmware, hardware,
   actividad y Wi-Fi; edición de DeviceName y FriendlyName; copias manuales.
   Los nombres pendientes no se pierden al refrescar o cambiar de página;
   se indican como **Sin guardar** y pueden descartarse. Son borradores de
@@ -57,13 +57,13 @@ carga al arrancar. El primer arranque sin inventario empieza vacío.
 Las búsquedas conservan los equipos guardados que no respondan y añaden los
 nuevos. Un inventario corrupto impide sobrescribirlo y se comunica el error.
 **Refrescar estados** consulta solo los guardados (12 s y un reintento si se agota el tiempo).
-En **Configuración**, cada tarjeta incluye **Eliminar dispositivo**, también si
+En la ventana de configuración de cada equipo está **Eliminar dispositivo**, también si
 está sin conexión. Tras confirmar se elimina del inventario guardado, sin cambiar
 el Tasmota ni borrar sus copias. Puede volver a aparecer en una nueva búsqueda.
 No se permite eliminarlo durante una consulta, búsqueda u operación del equipo.
 El refresco automático consulta cada **60 segundos** y se pausa durante
 búsquedas, consultas, cambios y actualizaciones; puede desactivarse en
-Configuración. El sondeo de la interfaz no genera consultas continuas a los
+el bocadillo 🔑 de Configuración. El sondeo de la interfaz no genera consultas continuas a los
 dispositivos. Durante el refresco y la consulta de firmware los controles de
 cada equipo siguen activos; una lectura que termine después de un cambio no
 sobrescribe el estado más reciente. Solo **Buscar Tasmotas** bloquea las tarjetas.
@@ -77,9 +77,11 @@ mientras haya una búsqueda o filtro activo.
 En **Dispositivos** las tarjetas son compactas: nombre, un punto de estado
 (el texto aparece al pasar el ratón), la imagen opcional y solo los botones
 marcados como visibles. Si un equipo no responde se conserva su nombre conocido.
-En **Configuración** cada tarjeta muestra la IP y la última lectura correcta,
-la casilla **Mostrar en Dispositivos** de cada salida, **Imagen…** / **Quitar**
-para asignar una foto propia del modelo y **Abrir WebUI** en el navegador.
+En **Configuración** cada tarjeta solo muestra información: IP, estado, última
+lectura, firmware, hardware y Wi-Fi. Al pulsarla se abre una ventana con los
+nombres, la casilla **Mostrar en Dispositivos** de cada salida, **Imagen…** / **Quitar**
+para asignar una foto propia del modelo y **Abrir WebUI**, copias y **Eliminar dispositivo**. El botón 🔑 abre un
+bocadillo con usuario, contraseña y refresco automático.
 Las imágenes se copian en Documentos\TasmotaManager\images y la visibilidad se
 guarda por equipo en preferences.json; TasmoDesk no incluye fotos de modelos.
 

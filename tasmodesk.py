@@ -13,7 +13,7 @@ from PySide6.QtGui import (
     QCloseEvent, QDesktopServices, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent, QWheelEvent,
 )
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QSlider, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
@@ -68,7 +68,7 @@ def stylesheet(dark: bool) -> str:
     )
     return f"""
     QWidget {{ font-family: 'Segoe UI'; font-size: 13px; color: {text}; }}
-    QMainWindow, QWidget#root {{ background: {bg}; }}
+    QMainWindow, QWidget#root, QDialog {{ background: {bg}; }}
     QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border: none; }}
     QFrame[role="card"] {{ background: {surface}; border: 1px solid {line}; border-radius: 14px; }}
     QFrame#sidebar {{ background: {nav}; border-radius: 18px; }}
@@ -160,6 +160,9 @@ class TasmotaWindow(QMainWindow):
         self.cards: dict[str, QFrame] = {}
         self.job_widgets: dict[str, tuple[QProgressBar, QLabel]] = {}
         self.notifications: list[QFrame] = []
+        self.config_dialog: QDialog | None = None
+        self.config_scroll: QScrollArea | None = None
+        self.config_ip = ""
         self.setWindowTitle("TasmoDesk")
         self.resize(1180, 820)
         self.setMinimumSize(900, 650)
@@ -227,6 +230,15 @@ class TasmotaWindow(QMainWindow):
             counts.addWidget(label(text, "muted", wrap=False))
         toolbar.addWidget(summary)
         toolbar.addStretch(1)
+        self.access_button = QPushButton("🔑")
+        self.access_button.setObjectName("access-button")
+        self.access_button.setProperty("secondary", True)
+        self.access_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.access_button.setToolTip("Usuario, contraseña y refresco automático")
+        self.access_button.setAccessibleName("Acceso a los dispositivos")
+        self.access_button.setCheckable(True)
+        self.access_button.clicked.connect(lambda _checked=False: self.show_access())
+        toolbar.addWidget(self.access_button)
         self.search_button = QPushButton("🔍")
         self.search_button.setObjectName("search-button")
         self.search_button.setProperty("secondary", True)
@@ -293,7 +305,13 @@ class TasmotaWindow(QMainWindow):
         main.addWidget(self.alert_scroll)
 
     def build_access(self) -> None:
-        self.access_frame, layout = card()
+        self.access_frame = QFrame(self, Qt.WindowType.Popup)
+        self.access_frame.setObjectName("access-popup")
+        self.access_frame.setProperty("role", "card")
+        self.access_frame.setMinimumWidth(520)
+        layout = QVBoxLayout(self.access_frame)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
         layout.addWidget(label("Acceso a los dispositivos", "title"))
         layout.addWidget(label("Opcionales. La contraseña permanece en memoria, no se guarda.", "muted"))
         row = QHBoxLayout()
@@ -318,7 +336,7 @@ class TasmotaWindow(QMainWindow):
         layout.addWidget(self.auto_refresh)
         self.auto_status = label("", "muted")
         layout.addWidget(self.auto_status)
-        self.content_layout.addWidget(self.access_frame)
+        self.access_frame.installEventFilter(self)
 
     def build_firmware(self) -> None:
         self.firmware_frame, layout = card()
@@ -396,6 +414,14 @@ class TasmotaWindow(QMainWindow):
         self.search.selectAll()
         self.update_search_indicator()
 
+    def show_access(self) -> None:
+        self.access_frame.adjustSize()
+        anchor = self.access_button.mapToGlobal(self.access_button.rect().bottomRight())
+        self.access_frame.move(anchor.x() - self.access_frame.width(), anchor.y() + 6)
+        self.access_frame.show()
+        self.access_button.setChecked(True)
+        self.password.setFocus()
+
     def update_search_indicator(self) -> None:
         active = bool(self.search.text().strip()) or self.filter.currentIndex() != 0
         self.search_button.setChecked(active or self.search_popup.isVisible())
@@ -426,7 +452,10 @@ class TasmotaWindow(QMainWindow):
         self.heading.setText(self.page)
         for name, control in self.navigation.items():
             control.setChecked(name == self.page)
-        self.access_frame.setVisible(self.page == "Configuración")
+        self.access_button.setVisible(self.page == "Configuración")
+        if self.page != "Configuración":
+            self.access_frame.hide()
+            self.close_config()
         self.firmware_frame.setVisible(self.page == "Actualizaciones")
         self.batch_frame.setVisible(self.page == "Actualizaciones" and bool(self.state["jobs"]))
         self.grid_widget.setUpdatesEnabled(False)
@@ -449,6 +478,7 @@ class TasmotaWindow(QMainWindow):
         self.grid_widget.setUpdatesEnabled(True)
         self.revision = self.state["revision"]
         self.device_scroll.verticalScrollBar().setValue(scroll)
+        self.render_config()
 
     def arrange_cards(self) -> None:
         if not self.cards:
@@ -493,22 +523,28 @@ class TasmotaWindow(QMainWindow):
         header.addWidget(label(ip, "muted", wrap=False))
         layout.addLayout(header)
         layout.addWidget(label(f"● {connection} · Última lectura: {device['last_read'] or 'sin consultar'}", role))
+        if self.page == "Configuración":
+            body = QHBoxLayout()
+            text = (device["error"] if not device["available"] else
+                    f"Tasmota {device['version']}\n{device['hardware']}\n"
+                    f"Actividad {device['uptime']} · Wi-Fi {device['rssi']}% ({device['signal_dbm']} dBm)")
+            body.addWidget(label(text, "error" if not device["available"] else "muted"), 1)
+            if pixmap := self.device_pixmap(device["image"], 56):
+                picture = QLabel()
+                picture.setPixmap(pixmap)
+                body.addWidget(picture, 0, Qt.AlignmentFlag.AlignTop)
+            layout.addLayout(body)
+            if any(key[0] == ip for key in self.drafts):
+                layout.addWidget(label("Nombres sin guardar", "warning"))
+            layout.addStretch()
+            layout.addWidget(label("Pulsa para configurar", "muted"))
+            frame.setProperty("config_ip", ip)
+            frame.setCursor(Qt.CursorShape.PointingHandCursor)
+            frame.setToolTip("Abrir la configuración de " + device["name"])
+            frame.installEventFilter(self)
+            return frame
         if not device["available"]:
             layout.addWidget(label(device["error"], "error"))
-        elif self.page == "Configuración":
-            layout.addWidget(label(
-                f"Tasmota {device['version']}\n{device['hardware']}\n"
-                f"Actividad {device['uptime']} · Wi-Fi {device['rssi']}% ({device['signal_dbm']} dBm)", "muted"
-            ))
-            self.name_row(layout, ip, 0, device["name"], disabled)
-            for relay in device["relays"]:
-                self.name_row(layout, ip, relay["number"], relay["name"], disabled,
-                              relay["number"] not in device["hidden"])
-            backup = button("Guardar copia de configuración", lambda: self.invoke(
-                partial(self.service.backup, ip)
-            ))
-            backup.setEnabled(not disabled)
-            layout.addWidget(backup)
         else:
             locale = {1034: "Español", 2057: "English"}.get(device["language_lcid"] or 0, "sin confirmar")
             layout.addWidget(label(f"Instalado: {device['version']} · {locale}", "muted"))
@@ -525,22 +561,89 @@ class TasmotaWindow(QMainWindow):
             local.setEnabled(not disabled and not running and not self.state["busy"])
             row.addWidget(local)
             layout.addLayout(row)
-        if self.page == "Configuración":
-            self.image_controls(layout, device)
-            self.backup_controls(layout, ip)
-            row = QHBoxLayout()
-            row.addWidget(button("Abrir WebUI", lambda: self.invoke(partial(self.open_webui, ip)), secondary=True))
-            remove = button("Eliminar dispositivo", partial(self.remove_device_ui, ip), secondary=True)
-            remove.setObjectName("remove-" + ip)
-            remove.setEnabled(not disabled and not self.state["busy"])
-            row.addWidget(remove)
-            layout.addLayout(row)
-        if self.page == "Actualizaciones":
-            job = next((job for job in self.state["jobs"] if job["ip"] == ip), None)
-            if job:
-                self.job_card(layout, job)
+        job = next((job for job in self.state["jobs"] if job["ip"] == ip), None)
+        if job:
+            self.job_card(layout, job)
         return frame
 
+    def open_config(self, ip: str) -> None:
+        if self.config_dialog is None:
+            dialog = QDialog(self)
+            dialog.setObjectName("config-dialog")
+            dialog.setModal(True)
+            dialog.setMinimumWidth(500)
+            outer = QVBoxLayout(dialog)
+            outer.setContentsMargins(0, 0, 0, 0)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            outer.addWidget(scroll)
+            dialog.finished.connect(lambda _result: self.forget_config())
+            self.config_dialog = dialog
+            self.config_scroll = scroll
+        self.config_ip = ip
+        self.render_config()
+        self.config_dialog.open()
+
+    def forget_config(self) -> None:
+        self.config_ip = ""
+
+    def close_config(self) -> None:
+        if self.config_dialog is not None and self.config_dialog.isVisible():
+            self.config_dialog.close()
+        self.config_ip = ""
+
+    def render_config(self) -> None:
+        if self.config_dialog is None or not self.config_ip:
+            return
+        device = next((d for d in self.state["devices"] if d["ip"] == self.config_ip), None)
+        if device is None:
+            self.close_config()
+            return
+        ip = device["ip"]
+        position = self.config_scroll.verticalScrollBar().value()
+        if (previous := self.config_scroll.takeWidget()) is not None:
+            discard_widget(previous, self.trash)
+        content = QWidget()
+        content.setObjectName("config-" + ip)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+        self.config_dialog.setWindowTitle(f"Configuración · {device['name']} ({ip})")
+        disabled = bool(device["pending"] or device["updating"] or self.state["devices_locked"] or self.state["demo"])
+        header = QHBoxLayout()
+        header.addWidget(label(device["name"], "title"), 1)
+        header.addWidget(label(ip, "muted", wrap=False))
+        layout.addLayout(header)
+        if not device["available"]:
+            layout.addWidget(label(device["error"], "error"))
+        else:
+            self.name_row(layout, ip, 0, device["name"], disabled)
+            for relay in device["relays"]:
+                self.name_row(layout, ip, relay["number"], relay["name"], disabled,
+                              relay["number"] not in device["hidden"])
+            backup = button("Guardar copia de configuración", lambda: self.invoke(
+                partial(self.service.backup, ip)
+            ))
+            backup.setEnabled(not disabled)
+            layout.addWidget(backup)
+        self.image_controls(layout, device)
+        self.backup_controls(layout, ip)
+        row = QHBoxLayout()
+        row.addWidget(button("Abrir WebUI", lambda: self.invoke(partial(self.open_webui, ip)), secondary=True))
+        remove = button("Eliminar dispositivo", partial(self.remove_device_ui, ip), secondary=True)
+        remove.setObjectName("remove-" + ip)
+        remove.setEnabled(not disabled and not self.state["busy"])
+        row.addWidget(remove)
+        row.addStretch()
+        row.addWidget(button("Cerrar", self.close_config))
+        layout.addLayout(row)
+        layout.addStretch()
+        self.config_scroll.setWidget(content)
+        content.setEnabled(not device["pending"])
+        self.config_dialog.resize(max(self.config_dialog.width(), 520),
+                                  min(content.sizeHint().height() + 4, max(360, self.height() - 80)))
+        self.config_scroll.verticalScrollBar().setValue(position)
     def device_pixmap(self, path: str, size: int) -> QPixmap | None:
         if not path:
             return None
@@ -723,14 +826,19 @@ class TasmotaWindow(QMainWindow):
         self.render_devices()
 
     def change(self, ip: str, operation: str, value: str | int, number: int = 0) -> bool:
-        self.cards[ip].setEnabled(False)
+        if ip in self.cards:
+            self.cards[ip].setEnabled(False)
+        if ip == self.config_ip and self.config_scroll is not None and (body := self.config_scroll.widget()):
+            body.setEnabled(False)
         success = self.invoke(partial(self.service.change, ip, operation, value, number))
         self.poll(force=True)
         return success
 
     def backup_controls(self, layout: QVBoxLayout, ip: str) -> None:
-        layout.addWidget(button("Ver copias guardadas", partial(self.show_backups, ip), secondary=True))
-        layout.addWidget(button("Abrir carpeta de copias", lambda: self.invoke(self.open_backup_folder), secondary=True))
+        row = QHBoxLayout()
+        row.addWidget(button("Ver copias guardadas", partial(self.show_backups, ip), secondary=True))
+        row.addWidget(button("Abrir carpeta de copias", lambda: self.invoke(self.open_backup_folder), secondary=True))
+        layout.addLayout(row)
         if ip in self.backup_views:
             rows = self.backup_views[ip]
             text = "\n\n".join(f"{r['name']}\n{r['modified']} · {r['size'] / 1024:.1f} KB" for r in rows)
@@ -862,7 +970,9 @@ class TasmotaWindow(QMainWindow):
             self.auto_status.setText("Pausado durante las operaciones" if self.state["auto_refresh_paused"]
                                      else "Solo consultas de lectura; se pausa durante actualizaciones")
             focus = QApplication.focusWidget()
-            editing = isinstance(focus, (QLineEdit, QComboBox, QSlider)) and self.device_scroll.isAncestorOf(focus)
+            editing = isinstance(focus, (QLineEdit, QComboBox, QSlider)) and (
+                self.device_scroll.isAncestorOf(focus)
+                or (self.config_dialog is not None and self.config_dialog.isAncestorOf(focus)))
             dragging = any(s.isSliderDown() for s in self.grid_widget.findChildren(QSlider))
             if force or (self.revision != self.state["revision"] and not editing and not dragging):
                 self.render_devices()
@@ -904,6 +1014,13 @@ class TasmotaWindow(QMainWindow):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is getattr(self, "search_popup", None) and event.type() == QEvent.Type.Hide:
             QTimer.singleShot(0, self.update_search_indicator)
+        if watched is getattr(self, "access_frame", None) and event.type() == QEvent.Type.Hide:
+            self.access_button.setChecked(False)
+        if (event.type() == QEvent.Type.MouseButtonRelease and isinstance(watched, QFrame)
+                and isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton
+                and (ip := watched.property("config_ip"))):
+            self.open_config(str(ip))
+            return True
         if event.type() == QEvent.Type.Resize and hasattr(self, "grid"):
             if watched is self.device_scroll.viewport():
                 self.arrange_cards()
