@@ -27,6 +27,67 @@ class ServiceTests(unittest.TestCase):
         self.service.devices[self.status.ip] = self.status
         self.service.release = FirmwareRelease("15.6.0")
 
+    def test_output_visibility_and_device_image_persist_per_device(self) -> None:
+        ip = self.status.ip
+        self.service.set_output_visible(ip, 1, False)
+        row = self.service.snapshot()["devices"][0]
+        self.assertEqual(row["hidden"], [1])
+        source = self.preferences_path.parent / "foto.PNG"
+        source.write_bytes(b"png")
+        self.service.set_device_image(ip, str(source))
+        stored = self.preferences_path.parent / "images" / "192-168-1-51.png"
+        self.assertEqual(stored.read_bytes(), b"png")
+        data = json.loads(self.preferences_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["devices"], {ip: {"hidden": [1], "image": str(stored)}})
+        snapshot = self.service.snapshot()
+        snapshot["preferences"]["devices"][ip]["hidden"].append(2)
+        self.assertEqual(self.service.preferences["devices"][ip]["hidden"], [1])
+        self.service.set_output_visible(ip, 1, True)
+        self.service.set_device_image(ip, "")
+        self.assertFalse(stored.exists())
+        self.assertEqual(json.loads(self.preferences_path.read_text(encoding="utf-8"))["devices"], {})
+        for bad in (str(self.preferences_path), str(self.preferences_path.parent / "missing.png")):
+            with self.assertRaises(TasmotaError):
+                self.service.set_device_image(ip, bad)
+        with self.assertRaises(TasmotaError):
+            self.service.set_output_visible("192.168.1.99", 1, False)
+
+    def test_remove_offline_device_persists_inventory_and_clears_state(self) -> None:
+        ip = self.status.ip
+        self.service._record_status(ip, self.status)
+        self.service.devices[ip] = "Sin conexión"
+        self.service.devices["192.168.1.52"] = "Sin consultar"
+        self.service.change_serial[ip] = 1
+        self.service.jobs[ip] = UpdateJob(ip, self.service.release, True, state="error")
+        with patch("tasmota_service.save_device_inventory") as save:
+            self.service.remove_device(ip)
+        save.assert_called_once_with(("192.168.1.52",))
+        for state in (self.service.devices, self.service.last_status, self.service.last_read,
+                      self.service.change_serial, self.service.jobs):
+            self.assertNotIn(ip, state)
+        self.service.executor.submit.assert_not_called()
+
+    def test_remove_device_save_failure_preserves_state(self) -> None:
+        with patch("tasmota_service.save_device_inventory", side_effect=TasmotaError("disco")):
+            with self.assertRaisesRegex(TasmotaError, "disco"):
+                self.service.remove_device(self.status.ip)
+        self.assertEqual(self.service.devices[self.status.ip], self.status)
+
+    def test_remove_device_rejects_active_operations_demo_and_invalid_inventory(self) -> None:
+        ip = self.status.ip
+        for attribute, value in (("busy", "Consultando"), ("pending", {ip}),
+                                 ("demo", True), ("inventory_error", "Inventario corrupto")):
+            with self.subTest(attribute=attribute), patch.object(self.service, attribute, value):
+                with patch("tasmota_service.save_device_inventory") as save:
+                    with self.assertRaises(TasmotaError):
+                        self.service.remove_device(ip)
+                    save.assert_not_called()
+        self.service.jobs[ip] = UpdateJob(ip, self.service.release, True)
+        with self.assertRaises(TasmotaError):
+            self.service.remove_device(ip)
+        with self.assertRaises(TasmotaError):
+            self.service.remove_device("192.168.1.99")
+
     def run_submitted(self) -> None:
         submission = self.service.executor.submit.call_args
         submission.args[0](*submission.args[1:])
@@ -247,7 +308,7 @@ class ServiceTests(unittest.TestCase):
         self.service.set_access("admin", "not-saved")
         self.service.set_preferences({"theme": "dark", "page": "Actualizaciones", "auto_refresh": False})
         data = json.loads(self.preferences_path.read_text(encoding="utf-8"))
-        self.assertEqual(data, {"theme": "dark", "page": "Actualizaciones", "auto_refresh": False})
+        self.assertEqual(data, {"theme": "dark", "page": "Actualizaciones", "auto_refresh": False, "devices": {}})
         self.assertNotIn("not-saved", self.preferences_path.read_text())
         with patch("tasmota_service.load_device_inventory", return_value=()):
             other = TasmotaService(preferences_path=self.preferences_path)
@@ -259,7 +320,9 @@ class ServiceTests(unittest.TestCase):
                 self.service.set_preferences({"theme": "light"})
         self.assertEqual(self.preferences_path.read_text(), previous)
         self.assertEqual(list(self.preferences_path.parent.glob("*.tmp")), [])
-        for invalid in ({"auto_refresh": 1}, {"theme": "x"}, {"page": "x"}, {"password": "secret"}):
+        for invalid in ({"auto_refresh": 1}, {"theme": "x"}, {"page": "x"}, {"password": "secret"},
+                        {"devices": []}, {"devices": {"192.168.1.51": {"hidden": ["1"]}}},
+                        {"devices": {"192.168.1.51": {"other": 1}}}):
             with self.assertRaises(TasmotaError):
                 self.service.set_preferences(invalid)
         self.preferences_path.write_text("corrupt")

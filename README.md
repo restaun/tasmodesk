@@ -57,6 +57,10 @@ carga al arrancar. El primer arranque sin inventario empieza vacío.
 Las búsquedas conservan los equipos guardados que no respondan y añaden los
 nuevos. Un inventario corrupto impide sobrescribirlo y se comunica el error.
 **Refrescar estados** consulta solo los guardados (12 s y un reintento si se agota el tiempo).
+En **Configuración**, cada tarjeta incluye **Eliminar dispositivo**, también si
+está sin conexión. Tras confirmar se elimina del inventario guardado, sin cambiar
+el Tasmota ni borrar sus copias. Puede volver a aparecer en una nueva búsqueda.
+No se permite eliminarlo durante una consulta, búsqueda u operación del equipo.
 El refresco automático consulta cada **60 segundos** y se pausa durante
 búsquedas, consultas, cambios y actualizaciones; puede desactivarse en
 Configuración. El sondeo de la interfaz no genera consultas continuas a los
@@ -64,10 +68,20 @@ dispositivos. Durante el refresco y la consulta de firmware los controles de
 cada equipo siguen activos; una lectura que termine después de un cambio no
 sobrescribe el estado más reciente. Solo **Buscar Tasmotas** bloquea las tarjetas.
 
-Las tarjetas muestran conexión y fecha de la última lectura correcta,
-conservando el nombre conocido si el equipo no responde. El buscador admite
-nombre, IP y nombre de salida, con filtros de disponibilidad, salidas apagadas
-y firmware pendiente. Cada tarjeta permite **Abrir WebUI** en el navegador.
+La barra superior reúne los contadores (guardados, disponibles y
+actualizándose) con **Refrescar estados** y **Buscar Tasmotas**. La lupa abre
+un recuadro emergente para buscar por nombre, IP o nombre de salida y filtrar
+por disponibilidad, salidas apagadas o firmware pendiente; queda resaltada
+mientras haya una búsqueda o filtro activo.
+
+En **Dispositivos** las tarjetas son compactas: nombre, un punto de estado
+(el texto aparece al pasar el ratón), la imagen opcional y solo los botones
+marcados como visibles. Si un equipo no responde se conserva su nombre conocido.
+En **Configuración** cada tarjeta muestra la IP y la última lectura correcta,
+la casilla **Mostrar en Dispositivos** de cada salida, **Imagen…** / **Quitar**
+para asignar una foto propia del modelo y **Abrir WebUI** en el navegador.
+Las imágenes se copian en Documentos\TasmotaManager\images y la visibilidad se
+guarda por equipo en preferences.json; TasmoDesk no incluye fotos de modelos.
 
 ## Copias y actualización
 

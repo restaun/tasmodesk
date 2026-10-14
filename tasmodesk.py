@@ -10,7 +10,7 @@ from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QCloseEvent, QDesktopServices, QKeyEvent, QMouseEvent, QResizeEvent, QWheelEvent,
+    QCloseEvent, QDesktopServices, QKeyEvent, QMouseEvent, QPixmap, QResizeEvent, QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QGridLayout,
@@ -85,6 +85,7 @@ def stylesheet(dark: bool) -> str:
                    padding: 9px 12px; font-weight: 600; }}
     QPushButton:hover {{ background: #1d4ed8; }}
     QPushButton[secondary="true"] {{ background: {bg}; color: {text}; border: 1px solid {line}; }}
+    QPushButton[secondary="true"]:checked {{ border: 1px solid #2563eb; background: {surface}; }}
     QPushButton:disabled {{ background: {line}; color: {muted}; }}
     QFrame#sidebar QPushButton {{ background: transparent; color: #d5e4f6; text-align: left; }}
     QFrame#sidebar QPushButton:checked {{ background: #2563eb; color: white; }}
@@ -202,42 +203,62 @@ class TasmotaWindow(QMainWindow):
         main.setSpacing(14)
         outer.addLayout(main, 1)
         header = QHBoxLayout()
-        self.heading = label(self.page, "heading")
-        header.addWidget(self.heading, 1)
-        self.refresh_button = button("Refrescar estados", lambda: self.invoke(self.service.refresh), secondary=True)
-        self.discover_button = button("Buscar Tasmotas", lambda: self.invoke(self.service.discover))
-        header.addWidget(self.refresh_button)
-        header.addWidget(self.discover_button)
-        main.addLayout(header)
+        self.heading = label(self.page, "heading", wrap=False)
+        header.addWidget(self.heading)
         self.status = label("", "muted")
-        main.addWidget(self.status)
-        summary = QHBoxLayout()
+        self.status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header.addWidget(self.status, 1)
+        main.addLayout(header)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
+        summary = QFrame()
+        summary.setProperty("role", "card")
+        summary.setFixedHeight(38)
+        counts = QHBoxLayout(summary)
+        counts.setContentsMargins(12, 2, 12, 2)
+        counts.setSpacing(6)
         self.counts: list[QLabel] = []
-        for text in ("Equipos guardados", "Disponibles", "Actualizándose"):
-            frame = QFrame()
-            frame.setProperty("role", "card")
-            frame.setFixedHeight(46)
-            layout = QHBoxLayout(frame)
-            layout.setContentsMargins(14, 4, 14, 4)
-            layout.setSpacing(10)
+        for index, text in enumerate(("guardados", "disponibles", "actualizándose")):
+            if index:
+                counts.addSpacing(8)
             count = label("0", "count", wrap=False)
             self.counts.append(count)
-            layout.addWidget(count)
-            layout.addWidget(label(text, "muted", wrap=False), 1)
-            summary.addWidget(frame, 1)
-        main.addLayout(summary)
-        toolbar = QHBoxLayout()
+            counts.addWidget(count)
+            counts.addWidget(label(text, "muted", wrap=False))
+        toolbar.addWidget(summary)
+        toolbar.addStretch(1)
+        self.search_button = QPushButton("🔍")
+        self.search_button.setObjectName("search-button")
+        self.search_button.setProperty("secondary", True)
+        self.search_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_button.setToolTip("Buscar y filtrar dispositivos")
+        self.search_button.setAccessibleName("Buscar y filtrar dispositivos")
+        self.search_button.setCheckable(True)
+        self.search_button.clicked.connect(lambda _checked=False: self.show_search())
+        toolbar.addWidget(self.search_button)
+        self.search_popup = QFrame(self, Qt.WindowType.Popup)
+        self.search_popup.setObjectName("search-popup")
+        self.search_popup.setProperty("role", "card")
+        popup = QHBoxLayout(self.search_popup)
+        popup.setContentsMargins(10, 10, 10, 10)
         self.search = QLineEdit()
         self.search.setPlaceholderText("Buscar por nombre, salida o IP")
         self.search.setAccessibleName("Buscar dispositivos")
-        self.search.textChanged.connect(self.render_devices)
+        self.search.setClearButtonEnabled(True)
+        self.search.setMinimumWidth(240)
+        self.search.textChanged.connect(self.search_changed)
         self.filter = QComboBox()
         self.filter.addItems(FILTERS)
         self.filter.setAccessibleName("Filtrar dispositivos")
-        self.filter.currentIndexChanged.connect(self.render_devices)
-        toolbar.addWidget(self.search, 1)
-        toolbar.addWidget(self.filter)
+        self.filter.currentIndexChanged.connect(self.search_changed)
+        popup.addWidget(self.search, 1)
+        popup.addWidget(self.filter)
+        self.refresh_button = button("Refrescar estados", lambda: self.invoke(self.service.refresh), secondary=True)
+        self.discover_button = button("Buscar Tasmotas", lambda: self.invoke(self.service.discover))
+        toolbar.addWidget(self.refresh_button)
+        toolbar.addWidget(self.discover_button)
         main.addLayout(toolbar)
+        self.search_popup.installEventFilter(self)
         self.device_scroll = QScrollArea()
         self.device_scroll.setWidgetResizable(True)
         self.device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -366,6 +387,24 @@ class TasmotaWindow(QMainWindow):
         self.setStyleSheet(stylesheet(self.dark))
         self.invoke(lambda: self.service.set_preferences({"theme": "dark" if self.dark else "light"}))
 
+    def show_search(self) -> None:
+        self.search_popup.adjustSize()
+        anchor = self.search_button.mapToGlobal(self.search_button.rect().bottomRight())
+        self.search_popup.move(anchor.x() - self.search_popup.width(), anchor.y() + 6)
+        self.search_popup.show()
+        self.search.setFocus()
+        self.search.selectAll()
+        self.update_search_indicator()
+
+    def update_search_indicator(self) -> None:
+        active = bool(self.search.text().strip()) or self.filter.currentIndex() != 0
+        self.search_button.setChecked(active or self.search_popup.isVisible())
+        self.search_button.setToolTip("Búsqueda o filtro activo" if active else "Buscar y filtrar dispositivos")
+
+    def search_changed(self) -> None:
+        self.update_search_indicator()
+        self.render_devices()
+
     def matches(self, device: DeviceEntry) -> bool:
         query = self.search.text().strip().casefold()
         text = " ".join([device["name"], device["ip"], *(r["name"] for r in device["relays"])])
@@ -440,34 +479,22 @@ class TasmotaWindow(QMainWindow):
         frame.setObjectName("device-" + ip)
         header = QHBoxLayout()
         header.addWidget(label(device["name"], "title"), 1)
-        header.addWidget(label(ip, "muted", wrap=False))
-        layout.addLayout(header)
         connection = "Actualizándose" if device["updating"] else "Disponible" if device["available"] else "Sin conexión"
         role = "warning" if device["updating"] else "online" if device["available"] else "muted"
-        layout.addWidget(label("● " + connection, role))
-        layout.addWidget(label("Última lectura correcta: " + (device["last_read"] or "sin consultar"), "muted"))
         disabled = bool(device["pending"] or device["updating"] or self.state["devices_locked"] or self.state["demo"])
+        if self.page == "Dispositivos":
+            dot = label("●", role, wrap=False)
+            dot.setToolTip(connection)
+            dot.setAccessibleName(connection)
+            header.addWidget(dot)
+            layout.addLayout(header)
+            self.compact_controls(layout, device, disabled)
+            return frame
+        header.addWidget(label(ip, "muted", wrap=False))
+        layout.addLayout(header)
+        layout.addWidget(label(f"● {connection} · Última lectura: {device['last_read'] or 'sin consultar'}", role))
         if not device["available"]:
             layout.addWidget(label(device["error"], "error"))
-        elif self.page == "Dispositivos":
-            for index, relay in enumerate(device["relays"]):
-                if device["dimmer"] is not None and index == len(device["relays"]) - 1:
-                    self.dimmer_row(layout, device, relay["name"], disabled)
-                else:
-                    row = QHBoxLayout()
-                    row.addWidget(label(relay["name"]), 1)
-                    on = relay["state"] == "ON"
-                    row.addWidget(label("Encendido" if on else "Apagado", "online" if on else "muted", wrap=False))
-                    control = button("Apagar" if on else "Encender", partial(
-                        self.change, ip, "power", "OFF" if on else "ON", relay["number"]
-                    ), secondary=on)
-                    control.setObjectName(f"power-{ip}-{relay['number']}")
-                    control.setAccessibleName(f"{control.text()} {relay['name']} de {device['name']}")
-                    control.setEnabled(not disabled)
-                    row.addWidget(control)
-                    layout.addLayout(row)
-            if not device["relays"] and device["dimmer"] is not None:
-                self.dimmer_row(layout, device, "Intensidad", disabled)
         elif self.page == "Configuración":
             layout.addWidget(label(
                 f"Tasmota {device['version']}\n{device['hardware']}\n"
@@ -475,7 +502,8 @@ class TasmotaWindow(QMainWindow):
             ))
             self.name_row(layout, ip, 0, device["name"], disabled)
             for relay in device["relays"]:
-                self.name_row(layout, ip, relay["number"], relay["name"], disabled)
+                self.name_row(layout, ip, relay["number"], relay["name"], disabled,
+                              relay["number"] not in device["hidden"])
             backup = button("Guardar copia de configuración", lambda: self.invoke(
                 partial(self.service.backup, ip)
             ))
@@ -498,13 +526,129 @@ class TasmotaWindow(QMainWindow):
             row.addWidget(local)
             layout.addLayout(row)
         if self.page == "Configuración":
+            self.image_controls(layout, device)
             self.backup_controls(layout, ip)
+            row = QHBoxLayout()
+            row.addWidget(button("Abrir WebUI", lambda: self.invoke(partial(self.open_webui, ip)), secondary=True))
+            remove = button("Eliminar dispositivo", partial(self.remove_device_ui, ip), secondary=True)
+            remove.setObjectName("remove-" + ip)
+            remove.setEnabled(not disabled and not self.state["busy"])
+            row.addWidget(remove)
+            layout.addLayout(row)
         if self.page == "Actualizaciones":
             job = next((job for job in self.state["jobs"] if job["ip"] == ip), None)
             if job:
                 self.job_card(layout, job)
-        layout.addWidget(button("Abrir WebUI", lambda: self.invoke(partial(self.open_webui, ip)), secondary=True))
         return frame
+
+    def device_pixmap(self, path: str, size: int) -> QPixmap | None:
+        if not path:
+            return None
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return None
+        return pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.SmoothTransformation)
+
+    def compact_controls(self, layout: QVBoxLayout, device: DeviceEntry, disabled: bool) -> None:
+        ip = device["ip"]
+        body = QHBoxLayout()
+        body.setSpacing(14)
+        if pixmap := self.device_pixmap(device["image"], 92):
+            picture = QLabel()
+            picture.setObjectName("image-" + ip)
+            picture.setPixmap(pixmap)
+            picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            picture.setFixedWidth(96)
+            body.addWidget(picture, 0, Qt.AlignmentFlag.AlignTop)
+        controls = QVBoxLayout()
+        controls.setSpacing(8)
+        body.addLayout(controls, 1)
+        layout.addLayout(body)
+        if not device["available"]:
+            controls.addWidget(label(device["error"], "error"))
+            controls.addStretch()
+            return
+        shown = 0
+        for index, relay in enumerate(device["relays"]):
+            if relay["number"] in device["hidden"]:
+                continue
+            shown += 1
+            if device["dimmer"] is not None and index == len(device["relays"]) - 1:
+                self.dimmer_row(controls, device, relay["name"], disabled)
+                continue
+            row = QHBoxLayout()
+            row.addWidget(label(relay["name"]), 1)
+            on = relay["state"] == "ON"
+            control = button("Apagar" if on else "Encender", partial(
+                self.change, ip, "power", "OFF" if on else "ON", relay["number"]
+            ), secondary=on)
+            control.setObjectName(f"power-{ip}-{relay['number']}")
+            control.setAccessibleName(f"{control.text()} {relay['name']} de {device['name']}")
+            control.setToolTip("Encendido" if on else "Apagado")
+            control.setMinimumWidth(92)
+            control.setEnabled(not disabled)
+            row.addWidget(control)
+            controls.addLayout(row)
+        if not device["relays"] and device["dimmer"] is not None:
+            shown += 1
+            self.dimmer_row(controls, device, "Intensidad", disabled)
+        if not shown:
+            controls.addWidget(label("Sin botones visibles. Actívalos en Configuración.", "muted"))
+        controls.addStretch()
+
+    def image_controls(self, layout: QVBoxLayout, device: DeviceEntry) -> None:
+        ip = device["ip"]
+        row = QHBoxLayout()
+        if pixmap := self.device_pixmap(device["image"], 48):
+            picture = QLabel()
+            picture.setPixmap(pixmap)
+            row.addWidget(picture)
+        else:
+            row.addWidget(label("Sin imagen", "muted", wrap=False))
+        row.addStretch()
+        choose = button("Imagen…", partial(self.choose_image_ui, ip), secondary=True)
+        choose.setObjectName("image-choose-" + ip)
+        choose.setToolTip("Imagen que se muestra en Dispositivos")
+        row.addWidget(choose)
+        if device["image"]:
+            clear = button("Quitar", lambda: self.invoke(partial(self.service.set_device_image, ip, "")),
+                           secondary=True)
+            clear.setObjectName("image-clear-" + ip)
+            row.addWidget(clear)
+        layout.addLayout(row)
+
+    def choose_image_ui(self, ip: str) -> None:
+        folder = self.service.image_directory()
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Imagen del dispositivo", str(folder if folder.exists() else folder.parent),
+            "Imágenes (*.png *.jpg *.jpeg *.webp *.bmp)",
+        )
+        if not path:
+            return
+        def action() -> None:
+            if QPixmap(path).isNull():
+                raise TasmotaError("No se pudo leer la imagen.")
+            self.service.set_device_image(ip, path)
+        self.invoke(action)
+
+    def remove_device_ui(self, ip: str) -> None:
+        device = next((item for item in self.state["devices"] if item["ip"] == ip), None)
+        if device is None:
+            return
+        if not self.confirm(
+            f"¿Eliminar {device['name']} ({ip}) de TasmoDesk?\n\n"
+            "No se cambia el dispositivo ni se borran sus copias de configuración.\n"
+            "Puede volver a aparecer al buscar Tasmotas."
+        ):
+            return
+        if self.invoke(partial(self.service.remove_device, ip)):
+            for key in list(self.drafts):
+                if key[0] == ip:
+                    del self.drafts[key]
+            self.backup_views.pop(ip, None)
+            self.open_logs.discard(ip)
+            self.poll(force=True)
 
     def dimmer_row(self, layout: QVBoxLayout, device: DeviceEntry, name: str, disabled: bool) -> None:
         row = QHBoxLayout()
@@ -525,10 +669,21 @@ class TasmotaWindow(QMainWindow):
         row.addWidget(value)
         layout.addLayout(row)
 
-    def name_row(self, layout: QVBoxLayout, ip: str, number: int, name: str, disabled: bool) -> None:
+    def name_row(self, layout: QVBoxLayout, ip: str, number: int, name: str, disabled: bool,
+                 visible: bool | None = None) -> None:
         key = (ip, number)
         draft = self.drafts.get(key)
-        layout.addWidget(label(f"Salida {number}" if number else "Dispositivo", "muted"))
+        caption = QHBoxLayout()
+        caption.addWidget(label(f"Salida {number}" if number else "Dispositivo", "muted"), 1)
+        if visible is not None:
+            show = QCheckBox("Mostrar en Dispositivos")
+            show.setObjectName(f"show-{ip}-{number}")
+            show.setChecked(visible)
+            def save_visible(value: bool) -> None:
+                self.invoke(lambda: self.service.set_output_visible(ip, number, value))
+            show.toggled.connect(save_visible)
+            caption.addWidget(show)
+        layout.addLayout(caption)
         row = QHBoxLayout()
         field = QLineEdit(draft.value if draft else name)
         field.setMinimumWidth(60)
@@ -747,6 +902,8 @@ class TasmotaWindow(QMainWindow):
             self.arrange_cards()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched is getattr(self, "search_popup", None) and event.type() == QEvent.Type.Hide:
+            QTimer.singleShot(0, self.update_search_indicator)
         if event.type() == QEvent.Type.Resize and hasattr(self, "grid"):
             if watched is self.device_scroll.viewport():
                 self.arrange_cards()
