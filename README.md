@@ -181,7 +181,11 @@ Si te resulta útil, puedes invitarme a un café:
 
 ## Licencia
 
-Distribuido bajo la licencia MIT. Consulta [LICENSE](LICENSE).
+Copyright (c) 2026 Restaun.
+
+El codigo propio se distribuye bajo GNU General Public License v3.0
+(SPDX: GPL-3.0-only). Consulta [LICENSE](LICENSE).
+Las dependencias y componentes de terceros conservan sus licencias y atribuciones.
 
 ---
 
